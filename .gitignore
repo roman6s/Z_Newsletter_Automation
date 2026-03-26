@@ -1,0 +1,23 @@
+# API Keys & Secrets
+.env
+*.env
+.saved_config.json
+
+# Output (generierte Newsletter)
+output/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
