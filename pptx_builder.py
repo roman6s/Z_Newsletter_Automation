@@ -139,19 +139,10 @@ def _picture(slide, img_bytes, l, t, w, h):
         slide.shapes.add_picture(io.BytesIO(img_bytes), l, t, w, h)
 
 
-def _fetch_image(url: str):
-    """Lädt ein Bild von einer URL; gibt bytes oder None zurück."""
-    if not url:
-        return None
-    try:
-        import requests as _req
-        r = _req.get(url, timeout=8,
-                     headers={"User-Agent": "Mozilla/5.0"})
-        if r.ok and "image" in r.headers.get("content-type", ""):
-            return r.content
-    except Exception:
-        pass
-    return None
+def _get_image_bytes(article: dict):
+    """Gibt vorgeladene Bild-Bytes zurück (oder None wenn kein Bild)."""
+    b = article.get("image_bytes")
+    return b if b else None
 
 
 # ── Bilder aus Template extrahieren ──────────────────────────────────────────
@@ -245,8 +236,8 @@ def _article_block(slide, article, num, top, block_h,
     sum_top    = y + title_h + Inches(0.08)
     content_h  = link_top - sum_top - Inches(0.10)   # Platz zw. Titel und Link
 
-    # ── Artikelbild laden ─────────────────────────────────────────────────────
-    img_bytes = _fetch_image(article.get("image_url", ""))
+    # ── Artikelbild (bereits beim Scrapen geladen) ────────────────────────────
+    img_bytes = _get_image_bytes(article)
 
     MAX_IMG_H = min(Inches(1.60), content_h * 0.38)
     MAX_IMG_W = w_text

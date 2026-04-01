@@ -32,6 +32,7 @@ class Article:
     published: date
     full_text: str = ""
     image_url: str = ""
+    image_bytes: bytes = b""
 
 
 def _extract_entries(soup: BeautifulSoup) -> List[dict]:
@@ -211,6 +212,15 @@ def fetch_articles_in_range(
         if verbose:
             print(f"  Loading article {i+1}/{len(unique_entries)}: {e['title'][:60]}...")
         full_text, image_url = _fetch_article_content(session, e["url"])
+        # Bild sofort herunterladen (wir sind sowieso online) – spart Zeit beim PPTX-Bau
+        image_bytes = b""
+        if image_url:
+            try:
+                r = session.get(image_url, timeout=5)
+                if r.ok and "image" in r.headers.get("content-type", ""):
+                    image_bytes = r.content
+            except Exception:
+                image_bytes = b""
         articles.append(
             Article(
                 title=e["title"],
@@ -219,6 +229,7 @@ def fetch_articles_in_range(
                 published=e["date"],
                 full_text=full_text,
                 image_url=image_url,
+                image_bytes=image_bytes,
             )
         )
         time.sleep(0.3)

@@ -84,6 +84,7 @@ def summarize_articles(articles: list, verbose: bool = True) -> list:
             "published": article.published,
             "summary": summary,
             "image_url": article.image_url,
+            "image_bytes": article.image_bytes,
         })
 
     return results
