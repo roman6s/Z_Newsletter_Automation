@@ -231,9 +231,10 @@ def _fetch_article_content(session: requests.Session, url: str):
     try:
         resp = session.get(url, timeout=30)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        html = resp.text
+        soup = BeautifulSoup(html, "html.parser")
 
-        # IBM Community (Higher Logic) article body
+        # ── Artikeltext ───────────────────────────────────────────────────────
         body = None
         for selector in [
             {"id": re.compile(r"BlogPostBody|PostBody|ArticleBody", re.I)},
@@ -243,46 +244,52 @@ def _fetch_article_content(session: requests.Session, url: str):
             if body:
                 break
 
-        # Fallback: largest content div
         if not body:
             candidates = soup.find_all("div", class_=True)
             best = None
             best_len = 0
             for div in candidates:
-                text = div.get_text(separator=" ", strip=True)
-                if len(text) > best_len and len(text) < 50000:
-                    best_len = len(text)
+                t = div.get_text(separator=" ", strip=True)
+                if len(t) > best_len and len(t) < 50000:
+                    best_len = len(t)
                     best = div
             body = best
 
-        image_url = ""
         text = ""
-
         if body:
-            # Extract first meaningful image before removing tags
-            skip_keywords = ("avatar", "logo", "icon", "badge", "banner", "button")
-            for img in body.find_all("img"):
-                src = img.get("src", "") or img.get("data-src", "")
-                if not src or not src.startswith("http"):
-                    continue
-                if any(k in src.lower() for k in skip_keywords):
-                    continue
-                # Prefer larger images (skip tiny ones via width/height attrs)
-                w = img.get("width", "")
-                h = img.get("height", "")
-                try:
-                    if int(w) < 100 or int(h) < 80:
-                        continue
-                except (ValueError, TypeError):
-                    pass
-                image_url = src
-                break
-
             for tag in body.find_all(["nav", "aside", "script", "style", "footer"]):
                 tag.decompose()
             text = body.get_text(separator="\n", strip=True)
             text = re.sub(r"\n{3,}", "\n\n", text)
             text = text[:8000]
+
+        # ── Artikelbild (IBM Community / Higher Logic) ────────────────────────
+        # Die Platform rendert Bilder teils per JS – aus dem rohen HTML extrahieren.
+        # Community-Template-GUID (Icons, Logos) überspringen:
+        TEMPLATE_GUID = "8b2c700c-5b4c-4e59-a864-e9ba84f18b1d"
+        SKIP_NAMES    = ("icon-", "loading", "avatar", "logo", "badge", "button")
+
+        image_url = ""
+
+        IMG_EXT = r'[^\s"\'<>]+\.(?:jpg|jpeg|png|webp|bmp)'
+
+        # 1. Suche UploadedImages-URLs mit echter Bild-Endung
+        uploaded = re.findall(
+            r'https?://[^\s"\'<>]+/UploadedImages/' + IMG_EXT, html, re.I)
+        for u in uploaded:
+            if TEMPLATE_GUID in u:
+                continue
+            if any(k in u.lower() for k in SKIP_NAMES):
+                continue
+            image_url = u
+            break
+
+        # 2. Fallback: FeaturedImages
+        if not image_url:
+            featured = re.findall(
+                r'https?://[^\s"\'<>]+/FeaturedImages/' + IMG_EXT, html, re.I)
+            if featured:
+                image_url = featured[0]
 
         return text, image_url
     except Exception as e:
