@@ -31,6 +31,7 @@ class Article:
     url: str
     published: date
     full_text: str = ""
+    image_url: str = ""
 
 
 def _extract_entries(soup: BeautifulSoup) -> List[dict]:
@@ -209,7 +210,7 @@ def fetch_articles_in_range(
     for i, e in enumerate(unique_entries):
         if verbose:
             print(f"  Loading article {i+1}/{len(unique_entries)}: {e['title'][:60]}...")
-        full_text = _fetch_article_text(session, e["url"])
+        full_text, image_url = _fetch_article_content(session, e["url"])
         articles.append(
             Article(
                 title=e["title"],
@@ -217,6 +218,7 @@ def fetch_articles_in_range(
                 url=e["url"],
                 published=e["date"],
                 full_text=full_text,
+                image_url=image_url,
             )
         )
         time.sleep(0.3)
@@ -224,15 +226,14 @@ def fetch_articles_in_range(
     return articles
 
 
-def _fetch_article_text(session: requests.Session, url: str) -> str:
-    """Fetch and extract the main text content of a blog article."""
+def _fetch_article_content(session: requests.Session, url: str):
+    """Fetch article text and first image URL. Returns (text, image_url)."""
     try:
         resp = session.get(url, timeout=30)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
         # IBM Community (Higher Logic) article body
-        # Try several known container IDs/classes
         body = None
         for selector in [
             {"id": re.compile(r"BlogPostBody|PostBody|ArticleBody", re.I)},
@@ -242,10 +243,9 @@ def _fetch_article_text(session: requests.Session, url: str) -> str:
             if body:
                 break
 
-        # Fallback: look for the largest content div
+        # Fallback: largest content div
         if not body:
             candidates = soup.find_all("div", class_=True)
-            # Pick the one with the most paragraph text
             best = None
             best_len = 0
             for div in candidates:
@@ -255,14 +255,35 @@ def _fetch_article_text(session: requests.Session, url: str) -> str:
                     best = div
             body = best
 
+        image_url = ""
+        text = ""
+
         if body:
-            # Remove navigation, ads, sidebars
+            # Extract first meaningful image before removing tags
+            skip_keywords = ("avatar", "logo", "icon", "badge", "banner", "button")
+            for img in body.find_all("img"):
+                src = img.get("src", "") or img.get("data-src", "")
+                if not src or not src.startswith("http"):
+                    continue
+                if any(k in src.lower() for k in skip_keywords):
+                    continue
+                # Prefer larger images (skip tiny ones via width/height attrs)
+                w = img.get("width", "")
+                h = img.get("height", "")
+                try:
+                    if int(w) < 100 or int(h) < 80:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+                image_url = src
+                break
+
             for tag in body.find_all(["nav", "aside", "script", "style", "footer"]):
                 tag.decompose()
             text = body.get_text(separator="\n", strip=True)
-            # Clean up excessive whitespace
             text = re.sub(r"\n{3,}", "\n\n", text)
-            return text[:8000]  # Limit to avoid huge prompts
-        return ""
+            text = text[:8000]
+
+        return text, image_url
     except Exception as e:
-        return f"[Fehler beim Laden: {e}]"
+        return f"[Fehler beim Laden: {e}]", ""

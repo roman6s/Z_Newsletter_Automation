@@ -37,12 +37,15 @@ Autor: {article.author}
 Artikel-Inhalt:
 {article.full_text[:5000]}
 
-Aufgabe: Schreibe eine prägnante Zusammenfassung auf Deutsch (3-5 Sätze).
-- Erkläre kurz worum es geht
-- Hebe die wichtigsten Punkte hervor
+Aufgabe: Schreibe eine strukturierte Zusammenfassung auf Deutsch mit 2-3 Absätzen.
+- Trenne die Absätze jeweils mit einer Leerzeile (Absatz 1, Leerzeile, Absatz 2, ...)
+- Erster Absatz: Worum geht es? (1-2 Sätze)
+- Zweiter Absatz: Wichtigste Punkte oder Erkenntnisse (2-4 Sätze – gerne ausführlich wenn der Artikel viel hergibt)
+- Optionaler dritter Absatz: Relevanz oder Ausblick (1-2 Sätze)
+- Finde eine gute Balance: nicht zu knapp, aber auch nicht ausschweifend
 - Professioneller, informativer Ton
 - Falls der Text nicht auf Deutsch ist, übersetze die Kernaussagen
-- Schreibe NUR die Zusammenfassung, ohne Einleitung"""
+- Schreibe NUR die Zusammenfassung, ohne Einleitung oder Überschriften"""
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -80,6 +83,7 @@ def summarize_articles(articles: list, verbose: bool = True) -> list:
             "url": article.url,
             "published": article.published,
             "summary": summary,
+            "image_url": article.image_url,
         })
 
     return results

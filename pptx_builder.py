@@ -88,6 +88,26 @@ def _tb(slide, l, t, w, h, text, size,
     return box
 
 
+def _multi_para_tb(slide, l, t, w, h, text, size, color=NEAR_BLACK):
+    """Textfeld mit Absätzen – getrennt durch Leerzeilen im Text."""
+    box = slide.shapes.add_textbox(l, t, w, h)
+    tf  = box.text_frame
+    tf.word_wrap = True
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if not paragraphs:
+        paragraphs = [text.strip()]
+    for i, para_text in enumerate(paragraphs):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        if i > 0:
+            p.space_before = Pt(5)
+        r = p.add_run()
+        r.text = para_text
+        r.font.size = Pt(size)
+        r.font.color.rgb = color
+        r.font.name = FONT
+    return box
+
+
 def _link_tb(slide, l, t, w, h, text, url):
     """Textfeld mit Hyperlink."""
     box = slide.shapes.add_textbox(l, t, w, h)
@@ -117,6 +137,21 @@ def _divider(slide, y):
 def _picture(slide, img_bytes, l, t, w, h):
     if img_bytes:
         slide.shapes.add_picture(io.BytesIO(img_bytes), l, t, w, h)
+
+
+def _fetch_image(url: str):
+    """Lädt ein Bild von einer URL; gibt bytes oder None zurück."""
+    if not url:
+        return None
+    try:
+        import requests as _req
+        r = _req.get(url, timeout=8,
+                     headers={"User-Agent": "Mozilla/5.0"})
+        if r.ok and "image" in r.headers.get("content-type", ""):
+            return r.content
+    except Exception:
+        pass
+    return None
 
 
 # ── Bilder aus Template extrahieren ──────────────────────────────────────────
@@ -175,9 +210,10 @@ def _article_block(slide, article, num, top, block_h,
                    l_num, l_text, w_text, num_color=IBM_BLUE, text_color=NEAR_BLACK):
     """
     Zeichnet einen Artikel-Block:
-      l_num   – X-Position der Zahl
-      l_text  – X-Position des Textes
-      w_text  – Breite der Textspalte
+      – Zahl + Titel oben
+      – Zusammenfassung (Absätze) darunter
+      – Artikelbild (falls vorhanden) danach
+      – Link + Autor/Datum am unteren Rand des Blocks verankert
     """
     pad = Inches(0.10)
     y   = top + pad
@@ -187,31 +223,47 @@ def _article_block(slide, article, num, top, block_h,
         str(num), 16, bold=True, color=num_color, align=PP_ALIGN.CENTER)
 
     # ── Titel ─────────────────────────────────────────────────────────────────
-    title_h = Inches(0.50)
+    title_h = Inches(0.55)
     _tb(slide, l_text, y, w_text, title_h,
         article["title"], 11, bold=True, color=text_color)
 
-    # ── Zusammenfassung ───────────────────────────────────────────────────────
-    sum_top = y + title_h + Inches(0.05)
-    sum_h   = (block_h - pad - title_h - Inches(0.05)
-               - Inches(0.28) - Inches(0.26) - Inches(0.10))
-    sum_h   = max(sum_h, Inches(1.0))
-    _tb(slide, l_text, sum_top, w_text, sum_h,
-        article["summary"], 9, color=text_color, wrap=True)
+    # ── Link + Autor am unteren Rand verankert ────────────────────────────────
+    author_top = top + block_h - Inches(0.28)
+    link_top   = author_top - Inches(0.30)
 
-    # ── Link ──────────────────────────────────────────────────────────────────
-    link_top = sum_top + sum_h + Inches(0.05)
-    _link_tb(slide, l_text, link_top, w_text, Inches(0.25),
-             "→ Mehr Informationen erhalten Sie hier",
-             article.get("url", ""))
-
-    # ── Autor / Datum ─────────────────────────────────────────────────────────
     pub = article.get("published")
     date_str = (f"{pub.day}. {GERMAN_MONTHS.get(pub.month,'')} {pub.year}"
                 if pub else "")
-    _tb(slide, l_text, link_top + Inches(0.27), w_text, Inches(0.24),
+    _link_tb(slide, l_text, link_top, w_text, Inches(0.26),
+             "→ Mehr Informationen erhalten Sie hier",
+             article.get("url", ""))
+    _tb(slide, l_text, author_top, w_text, Inches(0.26),
         f"{article.get('author','')}  ·  {date_str}",
         8, color=MID_GRAY, italic=True)
+
+    # ── Verfügbarer Bereich für Text + Bild ───────────────────────────────────
+    sum_top    = y + title_h + Inches(0.08)
+    content_h  = link_top - sum_top - Inches(0.10)   # Platz zw. Titel und Link
+
+    # ── Artikelbild laden ─────────────────────────────────────────────────────
+    img_bytes = _fetch_image(article.get("image_url", ""))
+
+    if img_bytes:
+        img_h   = min(Inches(1.60), content_h * 0.38)
+        sum_h   = content_h - img_h - Inches(0.12)
+        sum_h   = max(sum_h, Inches(0.80))
+        img_top = sum_top + sum_h + Inches(0.10)
+        try:
+            slide.shapes.add_picture(io.BytesIO(img_bytes),
+                                     l_text, img_top, w_text, img_h)
+        except Exception:
+            pass
+    else:
+        sum_h = max(content_h, Inches(0.80))
+
+    # ── Zusammenfassung (Absätze) ─────────────────────────────────────────────
+    _multi_para_tb(slide, l_text, sum_top, w_text, sum_h,
+                   article["summary"], 9, color=text_color)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

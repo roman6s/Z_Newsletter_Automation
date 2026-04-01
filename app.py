@@ -175,6 +175,7 @@ if st.button("🚀 Newsletter erstellen", type="primary",
                 "url": article.url,
                 "published": article.published,
                 "summary": summary,
+                "image_url": article.image_url,
             })
 
         progress_bar.empty()
