@@ -2,15 +2,15 @@
 IBM Z Newsletter PPTX Builder
 
 Layout:
-  Slide 0: Cover (from template) – TOC left, Article 1 right
-  Slides 1..N-1: Content slides (programmatically generated, 2 articles each)
-  Last slide: Closing (from template, untouched)
+  Slide 0 : Cover (from template) – TOC left sidebar, Article 1 right
+  Slides 1+: Content slides (programmatically generated, 2 articles each)
+  Last     : Closing slide (from template, untouched)
 
-Content slide structure:
-  - IBM Blue header bar + logo
-  - Article sections (oval number, title, summary, link, author/date)
-  - Thin divider between articles
-  - IBM Blue footer bar + copyright + page number
+Design principles:
+  - No oval/circle shapes – numbers as styled text for perfect alignment
+  - Two-column article layout: narrow number column | wide content column
+  - Consistent IBM Blue (#0043CE) for numbers and accents
+  - Cover TOC uses white text on the template's dark blue sidebar
 """
 
 import copy
@@ -18,7 +18,6 @@ import io
 import os
 import re
 import shutil
-from datetime import date
 from typing import List, Optional, Tuple
 
 from lxml import etree
@@ -31,72 +30,62 @@ from pptx.util import Inches, Pt, Emu
 
 from config import OUTPUT_DIR, TEMPLATE_FILE
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# ── Colours ───────────────────────────────────────────────────────────────────
+IBM_BLUE   = RGBColor(0x00, 0x43, 0xCE)
+WHITE      = RGBColor(0xFF, 0xFF, 0xFF)
+DARK_GRAY  = RGBColor(0x16, 0x16, 0x16)
+MID_GRAY   = RGBColor(0x6F, 0x6F, 0x6F)
+LIGHT_GRAY = RGBColor(0xD8, 0xD8, 0xD8)
 
 GERMAN_MONTHS = {
     1: "Januar", 2: "Februar", 3: "März", 4: "April",
-    5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
+    5: "Mai",    6: "Juni",    7: "Juli",  8: "August",
     9: "September", 10: "Oktober", 11: "November", 12: "Dezember",
 }
 
-IBM_BLUE    = RGBColor(0x00, 0x43, 0xCE)
-WHITE       = RGBColor(0xFF, 0xFF, 0xFF)
-DARK_GRAY   = RGBColor(0x16, 0x16, 0x16)
-MID_GRAY    = RGBColor(0x6F, 0x6F, 0x6F)
-LIGHT_GRAY  = RGBColor(0xCC, 0xCC, 0xCC)
-LINK_COLOR  = IBM_BLUE
+FONT = "IBM Plex Sans"
 
-# Slide dimensions (A4 portrait)
-SLIDE_W = Inches(8.27)
-SLIDE_H = Inches(11.69)
+# ── Slide geometry ────────────────────────────────────────────────────────────
+HEADER_H    = Inches(0.66)
+FOOTER_TOP  = Inches(11.13)
+CONTENT_TOP = Inches(0.82)
+CONTENT_BOT = Inches(10.95)
 
-# Layout zones
-HEADER_H      = Inches(0.66)
-FOOTER_TOP    = Inches(11.13)
-FOOTER_H      = Inches(0.56)
-CONTENT_TOP   = Inches(0.82)
-CONTENT_BOT   = Inches(10.95)
-MARGIN_L      = Inches(0.28)
-MARGIN_R      = Inches(8.00)
-CONTENT_W     = MARGIN_R - MARGIN_L
+# Content column positions (content slides)
+NUM_L   = Inches(0.28)   # number column left edge
+NUM_W   = Inches(0.38)   # number column width
+TEXT_L  = Inches(0.70)   # text column left edge
+TEXT_W  = Inches(7.35)   # text column width
 
 ARTICLES_PER_SLIDE = 2
-FONT_FAMILY = "IBM Plex Sans"
 
 
-# ── Slide management ──────────────────────────────────────────────────────────
+# ── Slide list helpers ────────────────────────────────────────────────────────
 
 def _delete_slide(prs: Presentation, index: int):
-    """Remove a slide by index from the presentation."""
-    xml_slides = prs.slides._sldIdLst
-    slides = list(xml_slides)
-    if 0 <= index < len(slides):
-        xml_slides.remove(slides[index])
+    lst = prs.slides._sldIdLst
+    items = list(lst)
+    if 0 <= index < len(items):
+        lst.remove(items[index])
 
 
 def _move_slide(prs: Presentation, from_idx: int, to_idx: int):
-    """Move a slide from one index to another."""
-    xml = prs.slides._sldIdLst
-    slides = list(xml)
-    elem = slides[from_idx]
-    xml.remove(elem)
-    xml.insert(to_idx, elem)
+    lst = prs.slides._sldIdLst
+    items = list(lst)
+    elem = items[from_idx]
+    lst.remove(elem)
+    lst.insert(to_idx, elem)
 
 
-# ── Image extraction ──────────────────────────────────────────────────────────
+# ── Logo extraction ───────────────────────────────────────────────────────────
 
-def _extract_logo(prs: Presentation) -> Tuple[bytes, str]:
-    """
-    Extract the IBM logo image bytes from the template.
-    Returns (image_bytes, content_type).
-    """
-    # Find in first content slide – "Picture 46" in header area
+def _extract_logo(prs: Presentation) -> Tuple[Optional[bytes], Optional[str]]:
+    """Return (bytes, content_type) of the IBM header logo from the template."""
     for slide in list(prs.slides)[1:]:
         for shape in slide.shapes:
             if shape.shape_type == 13 and "46" in shape.name:
                 if shape.top < Inches(1.0):
                     return shape.image.blob, shape.image.content_type
-    # Fallback: any small picture in header
     for slide in list(prs.slides)[1:]:
         for shape in slide.shapes:
             if shape.shape_type == 13 and shape.top < Inches(1.0):
@@ -104,10 +93,10 @@ def _extract_logo(prs: Presentation) -> Tuple[bytes, str]:
     return None, None
 
 
-# ── Low-level text helpers ────────────────────────────────────────────────────
+# ── XML / text helpers ────────────────────────────────────────────────────────
 
-def _set_para_text(p_elem, text: str):
-    """Replace all text in an <a:p> element, preserving first run formatting."""
+def _para_set_text(p_elem, text: str):
+    """Overwrite text of the first run in an <a:p>, clear the rest."""
     runs = p_elem.findall(qn("a:r"))
     if not runs:
         r = etree.SubElement(p_elem, qn("a:r"))
@@ -124,24 +113,19 @@ def _set_para_text(p_elem, text: str):
             t2.text = ""
 
 
-def _replace_shape_text(shape, new_text: str):
-    """
-    Replace all text in a shape, keeping the first run's formatting as template.
-    Newlines become separate paragraphs.
-    """
+def _shape_set_text(shape, text: str):
+    """Replace all text in a shape, keeping first-run formatting as base."""
     if not shape.has_text_frame:
         return
     txBody = shape.text_frame._txBody
-    all_runs = txBody.findall(".//" + qn("a:r"))
-    run_template = copy.deepcopy(all_runs[0]) if all_runs else None
-
+    runs = txBody.findall(".//" + qn("a:r"))
+    tmpl = copy.deepcopy(runs[0]) if runs else None
     for p in txBody.findall(qn("a:p")):
         txBody.remove(p)
-
-    for line in (new_text.split("\n") if new_text else [""]):
+    for line in (text.split("\n") if text else [""]):
         p = etree.SubElement(txBody, qn("a:p"))
-        if run_template is not None:
-            r = copy.deepcopy(run_template)
+        if tmpl is not None:
+            r = copy.deepcopy(tmpl)
             t = r.find(qn("a:t"))
             if t is None:
                 t = etree.SubElement(r, qn("a:t"))
@@ -153,134 +137,94 @@ def _replace_shape_text(shape, new_text: str):
             t.text = line
 
 
-# ── Content slide builder ─────────────────────────────────────────────────────
+# ── Primitive builders ────────────────────────────────────────────────────────
 
-def _add_rect(slide, left, top, width, height, color: RGBColor):
-    """Add a solid-color rectangle with no border."""
-    shape = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE,
-                                   left, top, width, height)
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = color
-    shape.line.fill.background()
-    return shape
-
-
-def _add_textbox(slide, left, top, width, height,
-                 text: str, font_size: int, bold=False,
-                 color: RGBColor = DARK_GRAY,
-                 align=PP_ALIGN.LEFT,
-                 font_name: str = FONT_FAMILY,
-                 word_wrap=True) -> object:
-    """Add a text box with a single paragraph."""
-    txBox = slide.shapes.add_textbox(left, top, width, height)
-    tf = txBox.text_frame
-    tf.word_wrap = word_wrap
-    tf.auto_size = None
-
-    para = tf.paragraphs[0]
-    para.alignment = align
-    run = para.add_run()
-    run.text = text
-    run.font.size = Pt(font_size)
-    run.font.bold = bold
-    run.font.color.rgb = color
-    run.font.name = font_name
-    return txBox
+def _rect(slide, left, top, width, height, color: RGBColor):
+    s = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+                               left, top, width, height)
+    s.fill.solid()
+    s.fill.fore_color.rgb = color
+    s.line.fill.background()
+    return s
 
 
-def _add_hyperlink_textbox(slide, left, top, width, height,
-                            display_text: str, url: str) -> object:
-    """Add a text box with a clickable hyperlink."""
-    txBox = slide.shapes.add_textbox(left, top, width, height)
-    tf = txBox.text_frame
+def _textbox(slide, left, top, width, height,
+             text: str, size: int,
+             bold=False, color: RGBColor = DARK_GRAY,
+             align=PP_ALIGN.LEFT, wrap=True,
+             italic=False, underline=False) -> object:
+    tb = slide.shapes.add_textbox(left, top, width, height)
+    tf = tb.text_frame
+    tf.word_wrap = wrap
+    p = tf.paragraphs[0]
+    p.alignment = align
+    r = p.add_run()
+    r.text = text
+    r.font.size = Pt(size)
+    r.font.bold = bold
+    r.font.italic = italic
+    r.font.underline = underline
+    r.font.color.rgb = color
+    r.font.name = FONT
+    return tb
+
+
+def _hyperlink_textbox(slide, left, top, width, height,
+                       display: str, url: str):
+    """Text box with a clickable hyperlink."""
+    tb = slide.shapes.add_textbox(left, top, width, height)
+    tf = tb.text_frame
     tf.word_wrap = False
-
-    para = tf.paragraphs[0]
-    run = para.add_run()
-    run.text = display_text
-    run.font.size = Pt(9)
-    run.font.color.rgb = LINK_COLOR
-    run.font.name = FONT_FAMILY
-    run.font.underline = True
-
-    # Add hyperlink via XML
+    p = tf.paragraphs[0]
+    r = p.add_run()
+    r.text = display
+    r.font.size = Pt(9)
+    r.font.color.rgb = IBM_BLUE
+    r.font.underline = True
+    r.font.name = FONT
     try:
         rId = slide.part.relate_to(
             url,
-            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            "http://schemas.openxmlformats.org/officeDocument/2006/"
+            "relationships/hyperlink",
             is_external=True,
         )
-        rPr = run._r.get_or_add_rPr()
+        rPr = r._r.get_or_add_rPr()
         hl = etree.SubElement(rPr, qn("a:hlinkClick"))
         hl.set(qn("r:id"), rId)
     except Exception:
-        pass  # Hyperlink fails gracefully
-
-    return txBox
-
-
-def _add_divider(slide, y: Emu):
-    """Add a thin horizontal divider line."""
-    from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
-    line = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE,
-                                  MARGIN_L, y, CONTENT_W, Inches(0.02))
-    line.fill.solid()
-    line.fill.fore_color.rgb = LIGHT_GRAY
-    line.line.fill.background()
+        pass
+    return tb
 
 
-def _add_oval_bullet(slide, left, top, number: int) -> object:
-    """Add a IBM-blue oval with a white number."""
-    size = Inches(0.30)
-    oval = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL,
-                                  left, top, size, size)
-    oval.fill.solid()
-    oval.fill.fore_color.rgb = IBM_BLUE
-    oval.line.fill.background()
-
-    tf = oval.text_frame
-    tf.margin_top = Inches(0.01)
-    tf.margin_bottom = 0
-    tf.margin_left = 0
-    tf.margin_right = 0
-    para = tf.paragraphs[0]
-    para.alignment = PP_ALIGN.CENTER
-    run = para.add_run()
-    run.text = str(number)
-    run.font.color.rgb = WHITE
-    run.font.size = Pt(7)
-    run.font.bold = True
-    run.font.name = FONT_FAMILY
-    return oval
+def _divider(slide, y: Emu):
+    """Thin full-width separator line."""
+    ln = slide.shapes.add_shape(
+        MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+        Inches(0.28), y, Inches(7.73), Inches(0.02),
+    )
+    ln.fill.solid()
+    ln.fill.fore_color.rgb = LIGHT_GRAY
+    ln.line.fill.background()
 
 
-def _build_header(slide, logo_bytes, logo_ct):
-    """Add IBM Blue header bar + logo to a slide."""
-    _add_rect(slide, Inches(-0.02), Inches(0), Inches(8.31), HEADER_H, IBM_BLUE)
+# ── Header / footer ───────────────────────────────────────────────────────────
+
+def _add_header(slide, logo_bytes, logo_ct):
+    _rect(slide, Inches(-0.02), Inches(0), Inches(8.31), HEADER_H, IBM_BLUE)
     if logo_bytes:
         slide.shapes.add_picture(
             io.BytesIO(logo_bytes),
-            Inches(7.16), Inches(0.16), Inches(0.82), Inches(0.33),
+            Inches(7.16), Inches(0.17), Inches(0.82), Inches(0.33),
         )
 
 
-def _build_footer(slide, logo_bytes, logo_ct, page_number: int):
-    """Add IBM Blue footer bar + copyright + page number + logo."""
-    _add_rect(slide, Inches(-0.02), FOOTER_TOP, Inches(8.31), FOOTER_H, IBM_BLUE)
-
-    # Copyright
-    _add_textbox(slide,
-                 Inches(0.07), Inches(11.44), Inches(2.0), Inches(0.22),
-                 "© 2026 IBM Corporation", font_size=6,
-                 color=WHITE, font_name=FONT_FAMILY)
-
-    # Page number
-    _add_textbox(slide,
-                 Inches(3.9), Inches(11.35), Inches(0.5), Inches(0.30),
-                 str(page_number), font_size=8,
-                 color=WHITE, align=PP_ALIGN.CENTER, font_name=FONT_FAMILY)
-
-    # Logo
+def _add_footer(slide, logo_bytes, logo_ct, page_num: int):
+    _rect(slide, Inches(-0.02), FOOTER_TOP, Inches(8.31), Inches(0.56), IBM_BLUE)
+    _textbox(slide, Inches(0.10), Inches(11.44), Inches(2.0), Inches(0.22),
+             "© 2026 IBM Corporation", size=6, color=WHITE)
+    _textbox(slide, Inches(3.90), Inches(11.36), Inches(0.50), Inches(0.28),
+             str(page_num), size=8, color=WHITE, align=PP_ALIGN.CENTER)
     if logo_bytes:
         slide.shapes.add_picture(
             io.BytesIO(logo_bytes),
@@ -288,280 +232,251 @@ def _build_footer(slide, logo_bytes, logo_ct, page_number: int):
         )
 
 
-def _build_article_block(slide, article: dict, article_number: int,
-                          top: Emu, available_height: Emu) -> Emu:
+# ── Article block (content slides) ───────────────────────────────────────────
+
+def _article_block(slide, article: dict, number: int,
+                   top: Emu, block_height: Emu) -> Emu:
     """
-    Draw one article block (oval, title, summary, link, author/date).
-    Returns the bottom Y coordinate of the block.
+    Draw one article in a two-column layout:
+      Left  (0.28"–0.68"): article number (IBM Blue, bold, 16pt)
+      Right (0.70"–8.05"): title · summary · link · author/date
+
+    Returns the bottom Y of the block.
     """
-    oval_size   = Inches(0.30)
-    text_left   = MARGIN_L + Inches(0.42)
-    text_width  = CONTENT_W - Inches(0.42)
+    padding_top = Inches(0.12)
+    y = top + padding_top
 
-    # ── Oval bullet ──
-    _add_oval_bullet(slide, MARGIN_L, top + Inches(0.02), article_number)
+    # ── Number (left column) ──────────────────────────────────────────────────
+    _textbox(slide, NUM_L, y, NUM_W, Inches(0.50),
+             str(number), size=18, bold=True,
+             color=IBM_BLUE, align=PP_ALIGN.CENTER)
 
-    # ── Title ──
-    title_h = Inches(0.55)
-    _add_textbox(slide, text_left, top, text_width, title_h,
-                 article["title"], font_size=11, bold=True,
-                 color=DARK_GRAY, font_name=FONT_FAMILY)
+    # ── Title ─────────────────────────────────────────────────────────────────
+    title_h = Inches(0.52)
+    _textbox(slide, TEXT_L, y, TEXT_W, title_h,
+             article["title"], size=11, bold=True, color=DARK_GRAY)
 
-    # ── Summary ──
-    summary_top = top + title_h + Inches(0.05)
-    summary_h   = Inches(2.50)
-    _add_textbox(slide, text_left, summary_top, text_width, summary_h,
-                 article["summary"], font_size=9,
-                 color=DARK_GRAY, font_name=FONT_FAMILY, word_wrap=True)
+    # ── Summary ───────────────────────────────────────────────────────────────
+    summary_top = y + title_h + Inches(0.06)
+    # Give summary the lion's share of the remaining block height
+    summary_h = block_height - padding_top - title_h - Inches(0.06) \
+                - Inches(0.30) - Inches(0.28) - Inches(0.12)
+    summary_h = max(summary_h, Inches(1.20))
+    _textbox(slide, TEXT_L, summary_top, TEXT_W, summary_h,
+             article["summary"], size=9, color=DARK_GRAY, wrap=True)
 
-    # ── Link ──
+    # ── Link ──────────────────────────────────────────────────────────────────
     link_top = summary_top + summary_h + Inches(0.06)
-    _add_hyperlink_textbox(slide,
-                           text_left, link_top, text_width, Inches(0.28),
-                           "→ Mehr Informationen erhalten Sie hier",
-                           article.get("url", ""))
+    _hyperlink_textbox(slide, TEXT_L, link_top, TEXT_W, Inches(0.25),
+                       "→ Mehr Informationen erhalten Sie hier",
+                       article.get("url", ""))
 
-    # ── Author / Date ──
+    # ── Author / Date ─────────────────────────────────────────────────────────
     pub = article.get("published")
-    date_str = ""
-    if pub:
-        date_str = f"{pub.day}. {GERMAN_MONTHS.get(pub.month, '')} {pub.year}"
-    author_line = f"{article.get('author', '')}  ·  {date_str}"
-    author_top  = link_top + Inches(0.30)
-    _add_textbox(slide, text_left, author_top, text_width, Inches(0.25),
-                 author_line, font_size=8,
-                 color=MID_GRAY, font_name=FONT_FAMILY)
+    date_str = (f"{pub.day}. {GERMAN_MONTHS.get(pub.month, '')} {pub.year}"
+                if pub else "")
+    author_top = link_top + Inches(0.27)
+    _textbox(slide, TEXT_L, author_top, TEXT_W, Inches(0.24),
+             f"{article.get('author', '')}  ·  {date_str}",
+             size=8, color=MID_GRAY, italic=True)
 
-    block_bottom = author_top + Inches(0.30)
-    return block_bottom
+    return top + block_height
 
 
-def _create_content_slide(prs: Presentation, articles: List[dict],
-                           page_number: int, logo_bytes, logo_ct) -> object:
+# ── Content slide factory ─────────────────────────────────────────────────────
+
+def _new_content_slide(prs: Presentation, articles: List[dict],
+                       page_num: int, first_article_num: int,
+                       logo_bytes, logo_ct):
     """
-    Create a fresh content slide with up to ARTICLES_PER_SLIDE articles.
-    Inserts before the last slide (closing).
+    Generate one content slide and insert it before the closing slide.
     """
-    blank_layout = prs.slide_layouts[6]  # "Leer" / blank
-    slide = prs.slides.add_slide(blank_layout)
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
 
-    _build_header(slide, logo_bytes, logo_ct)
-    _build_footer(slide, logo_bytes, logo_ct, page_number)
+    _add_header(slide, logo_bytes, logo_ct)
+    _add_footer(slide, logo_bytes, logo_ct, page_num)
 
-    n = len(articles)
-    if n == 0:
+    if not articles:
+        _move_slide(prs, len(prs.slides) - 1, len(prs.slides) - 2)
         return slide
 
-    # Distribute vertical space evenly
-    total_h  = CONTENT_BOT - CONTENT_TOP
-    block_h  = total_h / n
-    divider_gap = Inches(0.25)
+    n = len(articles)
+    total_h = CONTENT_BOT - CONTENT_TOP
+    block_h = total_h / n
 
     for i, article in enumerate(articles):
-        top = CONTENT_TOP + i * block_h + Inches(0.10)
-        avail = block_h - Inches(0.20)
-        _build_article_block(slide, article, page_number * ARTICLES_PER_SLIDE - (n - i - 1),
-                             top, avail)
-
-        # Divider between articles (not after the last one)
+        top = CONTENT_TOP + i * block_h
+        _article_block(slide, article, first_article_num + i, top, block_h)
         if i < n - 1:
-            divider_y = CONTENT_TOP + (i + 1) * block_h - divider_gap
-            _add_divider(slide, divider_y)
+            _divider(slide, top + block_h - Inches(0.18))
 
-    # Move newly added slide to position before closing slide
     _move_slide(prs, len(prs.slides) - 1, len(prs.slides) - 2)
     return slide
 
 
-# ── Cover slide update ────────────────────────────────────────────────────────
+# ── Cover slide ───────────────────────────────────────────────────────────────
 
-def _update_cover_slide(slide, month_name: str, year: int,
-                         issue_number: str, articles: List[dict]):
-    """Update cover: month/year, issue number, TOC, Article 1 content."""
-
+def _update_cover(slide, month_name: str, year: int,
+                  issue_str: str, articles: List[dict]):
+    """Update the cover slide in-place."""
     month_re = re.compile(
         r"(Januar|Februar|März|April|Mai|Juni|Juli|August|"
         r"September|Oktober|November|Dezember)"
     )
 
-    # ── Update month/year, issue number ──────────────────────────────────────
+    # Update month / year / issue number using existing shapes
     for shape in slide.shapes:
         if not shape.has_text_frame:
             continue
-        text = shape.text_frame.text
+        txt = shape.text_frame.text
+        if month_re.search(txt) and re.search(r"\d{4}", txt):
+            tb = shape.text_frame._txBody
+            paras = tb.findall(qn("a:p"))
+            nonempty = [p for p in paras if
+                        "".join(t.text or "" for t in
+                                p.findall(".//" + qn("a:t"))).strip()]
+            if len(nonempty) >= 2:
+                _para_set_text(nonempty[0], month_name)
+                _para_set_text(nonempty[-1], str(year))
+            elif nonempty:
+                _para_set_text(nonempty[0], f"{month_name} {year}")
+        elif "Issue No." in txt:
+            _shape_set_text(shape, f"Issue No. {issue_str}")
 
-        if month_re.search(text) and re.search(r"\d{4}", text):
-            txBody = shape.text_frame._txBody
-            paras = txBody.findall(qn("a:p"))
-            non_empty = [p for p in paras if
-                         "".join(t.text or "" for t in p.findall(".//" + qn("a:t"))).strip()]
-            if len(non_empty) >= 2:
-                _set_para_text(non_empty[0], month_name)
-                _set_para_text(non_empty[-1], str(year))
-            elif len(non_empty) == 1:
-                _set_para_text(non_empty[0], f"{month_name} {year}")
-            continue
-
-        if "Issue No." in text:
-            _replace_shape_text(shape, f"Issue No. {issue_number}")
-            continue
-
-    # ── Clear right content area (old article) ───────────────────────────────
-    to_remove = []
+    # Remove old article content and old TOC items from right + sidebar
+    to_del = []
     for shape in slide.shapes:
+        # Right-side article content (old template text)
         if (hasattr(shape, "left") and shape.left > Inches(2.5)
                 and hasattr(shape, "top") and shape.top > Inches(2.0)
-                and shape.shape_type != 13):  # keep images
-            to_remove.append(shape._element)
-    for elem in to_remove:
-        slide.shapes._spTree.remove(elem)
+                and shape.shape_type != 13):
+            to_del.append(shape._element)
+        # Old TOC items in sidebar (ovals + small text boxes below y=2")
+        if (hasattr(shape, "left") and shape.left < Inches(3.0)
+                and hasattr(shape, "top") and shape.top > Inches(2.1)
+                and shape.shape_type != 13):
+            to_del.append(shape._element)
 
-    # ── Rebuild TOC (left sidebar) ────────────────────────────────────────────
-    _rebuild_toc(slide, articles)
-
-    # ── Add Article 1 to right content area ───────────────────────────────────
-    if articles:
-        _add_article1_to_cover(slide, articles[0])
-
-
-def _rebuild_toc(slide, articles: List[dict]):
-    """Remove old TOC ovals + text boxes, add fresh ones for current articles."""
-    # Remove existing TOC items (small shapes in left sidebar below header)
-    to_remove = []
-    for shape in slide.shapes:
-        in_sidebar = (hasattr(shape, "left") and shape.left < Inches(3.0)
-                      and hasattr(shape, "top") and shape.top > Inches(2.1))
-        is_toc_item = (shape.has_text_frame and shape.width < Inches(2.7)) or \
-                      ("Oval" in shape.name)
-        if in_sidebar and is_toc_item:
-            to_remove.append(shape._element)
-
-    # Also remove the EVENTS label and sub-items
-    events_labels = ["EVENTS", "und vieles mehr"]
-    for shape in slide.shapes:
-        if shape.has_text_frame:
-            for label in events_labels:
-                if label in shape.text_frame.text:
-                    to_remove.append(shape._element)
-                    break
-
-    seen = set()
-    for elem in to_remove:
-        if id(elem) not in seen:
-            seen.add(id(elem))
+    seen: set = set()
+    for el in to_del:
+        eid = id(el)
+        if eid not in seen:
+            seen.add(eid)
             try:
-                slide.shapes._spTree.remove(elem)
+                slide.shapes._spTree.remove(el)
             except Exception:
                 pass
 
-    # Add fresh TOC items
-    toc_start_y = Inches(2.38)
-    item_h      = Inches(0.40)
-    oval_x      = Inches(0.13)
-    text_x      = Inches(0.48)
-    text_w      = Inches(2.30)
+    # Rebuild TOC
+    _build_toc(slide, articles)
+
+    # Article 1 on the right
+    if articles:
+        _cover_article(slide, articles[0])
+
+
+def _build_toc(slide, articles: List[dict]):
+    """
+    Add a clean numbered list for the TOC on the cover sidebar.
+    Text is WHITE to be visible on the dark blue sidebar background.
+    Layout: "1  Short title" per line.
+    """
+    y      = Inches(2.35)
+    row_h  = Inches(0.38)
+    num_l  = Inches(0.14)
+    num_w  = Inches(0.28)
+    txt_l  = Inches(0.46)
+    txt_w  = Inches(2.32)
 
     for i, article in enumerate(articles):
-        y = toc_start_y + i * item_h
+        top = y + i * row_h
 
-        # Oval bullet
-        _add_oval_bullet(slide, oval_x, y + Inches(0.04), i + 1)
+        # Number
+        _textbox(slide, num_l, top, num_w, Inches(0.34),
+                 str(i + 1), size=9, bold=True,
+                 color=WHITE, align=PP_ALIGN.CENTER)
 
         # Short title
         short = article["title"]
         if len(short) > 30:
             short = short[:27].rsplit(" ", 1)[0] + "..."
-
-        txBox = slide.shapes.add_textbox(text_x, y, text_w, Inches(0.35))
-        tf = txBox.text_frame
-        tf.word_wrap = False
-        para = tf.paragraphs[0]
-        run = para.add_run()
-        run.text = short
-        run.font.size = Pt(8)
-        run.font.color.rgb = WHITE
-        run.font.name = FONT_FAMILY
+        _textbox(slide, txt_l, top, txt_w, Inches(0.34),
+                 short, size=8, color=WHITE, wrap=False)
 
 
-def _add_article1_to_cover(slide, article: dict):
-    """Add Article 1 content to the right side of the cover slide."""
+def _cover_article(slide, article: dict):
+    """
+    Place Article 1 in the right content area of the cover slide.
+    Layout mirrors the content slides: large number left, text right.
+    """
+    top   = Inches(2.25)
     left  = Inches(3.00)
     width = Inches(5.05)
-    top_start = Inches(2.25)
+    num_w = Inches(0.45)
+    txt_l = left + num_w + Inches(0.05)
+    txt_w = width - num_w - Inches(0.05)
 
-    # Oval + Title
-    _add_oval_bullet(slide, left, top_start + Inches(0.02), 1)
-    title_left = left + Inches(0.42)
-    title_w    = width - Inches(0.42)
-    _add_textbox(slide, title_left, top_start, title_w, Inches(0.60),
-                 article["title"], font_size=11, bold=True,
-                 color=DARK_GRAY, font_name=FONT_FAMILY)
+    # Number
+    _textbox(slide, left, top, num_w, Inches(0.55),
+             "1", size=20, bold=True,
+             color=IBM_BLUE, align=PP_ALIGN.CENTER)
+
+    # Title
+    _textbox(slide, txt_l, top, txt_w, Inches(0.55),
+             article["title"], size=11, bold=True, color=DARK_GRAY)
 
     # Summary
-    summary_top = top_start + Inches(0.65)
-    _add_textbox(slide, left, summary_top, width, Inches(5.80),
-                 article["summary"], font_size=9,
-                 color=DARK_GRAY, font_name=FONT_FAMILY, word_wrap=True)
+    sum_top = top + Inches(0.60)
+    _textbox(slide, left, sum_top, width, Inches(5.70),
+             article["summary"], size=9, color=DARK_GRAY, wrap=True)
 
     # Link
-    link_top = summary_top + Inches(5.90)
-    _add_hyperlink_textbox(slide, left, link_top, width, Inches(0.28),
-                           "→ Mehr Informationen erhalten Sie hier",
-                           article.get("url", ""))
+    link_top = sum_top + Inches(5.80)
+    _hyperlink_textbox(slide, left, link_top, width, Inches(0.28),
+                       "→ Mehr Informationen erhalten Sie hier",
+                       article.get("url", ""))
 
-    # Author / Date
+    # Author / date
     pub = article.get("published")
-    date_str = f"{pub.day}. {GERMAN_MONTHS.get(pub.month, '')} {pub.year}" if pub else ""
-    author_top = link_top + Inches(0.30)
-    _add_textbox(slide, left, author_top, width, Inches(0.25),
-                 f"{article.get('author', '')}  ·  {date_str}",
-                 font_size=8, color=MID_GRAY, font_name=FONT_FAMILY)
+    date_str = (f"{pub.day}. {GERMAN_MONTHS.get(pub.month, '')} {pub.year}"
+                if pub else "")
+    _textbox(slide, left, link_top + Inches(0.30), width, Inches(0.25),
+             f"{article.get('author', '')}  ·  {date_str}",
+             size=8, color=MID_GRAY, italic=True)
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-def build_newsletter(
-    articles: List[dict],
-    month: int,
-    year: int,
-    issue_number: str,
-    output_filename: Optional[str] = None,
-) -> str:
-    """
-    Build the newsletter PPTX.
-    Returns path to the generated file.
-    """
+def build_newsletter(articles: List[dict],
+                     month: int, year: int, issue_number: str,
+                     output_filename: Optional[str] = None) -> str:
+    """Build and save the newsletter. Returns the output file path."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-
     month_name = GERMAN_MONTHS.get(month, str(month))
-    if output_filename is None:
-        output_filename = f"IBM_Z_Newsletter_{month_name}_{year}.pptx"
-    output_path = os.path.join(OUTPUT_DIR, output_filename)
+    fname = output_filename or f"IBM_Z_Newsletter_{month_name}_{year}.pptx"
+    out   = os.path.join(OUTPUT_DIR, fname)
+    shutil.copy2(TEMPLATE_FILE, out)
 
-    # Work on a copy (keep original template untouched)
-    shutil.copy2(TEMPLATE_FILE, output_path)
-    prs = Presentation(output_path)
-
-    # ── Extract logo once ─────────────────────────────────────────────────────
+    prs = Presentation(out)
     logo_bytes, logo_ct = _extract_logo(prs)
 
-    # ── Update cover slide ────────────────────────────────────────────────────
-    _update_cover_slide(prs.slides[0], month_name, year, issue_number, articles)
+    # ── Cover ─────────────────────────────────────────────────────────────────
+    _update_cover(prs.slides[0], month_name, year, issue_number, articles)
 
-    # ── Delete all slides except cover (0) and closing (last) ─────────────────
-    # Delete in reverse order to keep indices valid
+    # ── Strip all slides except cover (0) and closing (last) ──────────────────
     for i in range(len(prs.slides) - 2, 0, -1):
         _delete_slide(prs, i)
-    # Now prs.slides = [cover, closing]
+    # prs.slides == [cover, closing]
 
-    # ── Generate content slides (articles[1:], Article 1 is on cover) ─────────
+    # ── Content slides (articles[1:], article[0] is on cover) ─────────────────
     remaining = articles[1:]
     groups = [remaining[i:i + ARTICLES_PER_SLIDE]
-              for i in range(0, len(remaining), ARTICLES_PER_SLIDE)]
+              for i in range(0, max(len(remaining), 1), ARTICLES_PER_SLIDE)]
 
-    # Page numbers: cover = 1, content slides = 2, 3, ...
     for page_idx, group in enumerate(groups):
-        _create_content_slide(prs, group, page_idx + 2, logo_bytes, logo_ct)
+        first_num = 1 + 1 + page_idx * ARTICLES_PER_SLIDE  # article 1 on cover
+        _new_content_slide(prs, group, page_idx + 2, first_num,
+                           logo_bytes, logo_ct)
 
-    prs.save(output_path)
-    return output_path
+    prs.save(out)
+    return out
