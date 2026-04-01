@@ -265,8 +265,10 @@ def _article_block(slide, article, num, top, block_h,
 
             sum_h   = max(content_h - img_h - Inches(0.12), Inches(0.80))
             img_top = sum_top + sum_h + Inches(0.10)
+            # Textboxen haben ~0.05" internen Innenabstand links → Bild angleichen
+            img_left = l_text + Inches(0.05)
             slide.shapes.add_picture(io.BytesIO(img_bytes),
-                                     l_text, img_top, img_w, img_h)
+                                     img_left, img_top, img_w, img_h)
         except Exception:
             img_bytes = None
 
