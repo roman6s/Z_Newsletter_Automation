@@ -248,17 +248,34 @@ def _article_block(slide, article, num, top, block_h,
     # ── Artikelbild laden ─────────────────────────────────────────────────────
     img_bytes = _fetch_image(article.get("image_url", ""))
 
+    MAX_IMG_H = min(Inches(1.60), content_h * 0.38)
+
     if img_bytes:
-        img_h   = min(Inches(1.60), content_h * 0.38)
-        sum_h   = content_h - img_h - Inches(0.12)
-        sum_h   = max(sum_h, Inches(0.80))
-        img_top = sum_top + sum_h + Inches(0.10)
         try:
+            # Nur Breite vorgeben → python-pptx berechnet Höhe (Seitenverhältnis)
+            tmp = slide.shapes.add_picture(io.BytesIO(img_bytes),
+                                           l_text, Inches(0), w_text)
+            natural_h = tmp.height
+            # Bild entfernen, neu platzieren wenn es passt
+            sp = tmp._element
+            sp.getparent().remove(sp)
+
+            if natural_h <= MAX_IMG_H:
+                img_h = natural_h
+            else:
+                # Höhe begrenzen, Breite proportional anpassen
+                ratio = MAX_IMG_H / natural_h
+                img_h = MAX_IMG_H
+                w_img = int(w_text * ratio)
+            sum_h   = max(content_h - img_h - Inches(0.12), Inches(0.80))
+            img_top = sum_top + sum_h + Inches(0.10)
+            w_img   = w_text  # Breite auf Spaltenbreite setzen, Höhe limitiert
             slide.shapes.add_picture(io.BytesIO(img_bytes),
-                                     l_text, img_top, w_text, img_h)
+                                     l_text, img_top, w_img, img_h)
         except Exception:
-            pass
-    else:
+            img_bytes = None  # Fallback: kein Bild
+
+    if not img_bytes:
         sum_h = max(content_h, Inches(0.80))
 
     # ── Zusammenfassung (Absätze) ─────────────────────────────────────────────

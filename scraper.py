@@ -266,8 +266,12 @@ def _fetch_article_content(session: requests.Session, url: str):
         # ── Artikelbild (IBM Community / Higher Logic) ────────────────────────
         # Die Platform rendert Bilder teils per JS – aus dem rohen HTML extrahieren.
         # Community-Template-GUID (Icons, Logos) überspringen:
-        TEMPLATE_GUID = "8b2c700c-5b4c-4e59-a864-e9ba84f18b1d"
-        SKIP_NAMES    = ("icon-", "loading", "avatar", "logo", "badge", "button")
+        # GUIDs von Community-weiten Assets (kein Artikel-spezifisches Bild)
+        SKIP_GUIDS = {
+            "8b2c700c-5b4c-4e59-a864-e9ba84f18b1d",  # Community-Template
+            "dfd5be75-7434-44d5-beed-41626462dd64",   # IBM Bee / seitenweite Assets
+        }
+        SKIP_NAMES = ("icon-", "loading", "avatar", "logo", "badge", "button")
 
         image_url = ""
 
@@ -277,7 +281,7 @@ def _fetch_article_content(session: requests.Session, url: str):
         uploaded = re.findall(
             r'https?://[^\s"\'<>]+/UploadedImages/' + IMG_EXT, html, re.I)
         for u in uploaded:
-            if TEMPLATE_GUID in u:
+            if any(g in u for g in SKIP_GUIDS):
                 continue
             if any(k in u.lower() for k in SKIP_NAMES):
                 continue
