@@ -32,4 +32,4 @@ SUMMARY_LANGUAGE = "Deutsch"
 OUTPUT_DIR = "output"
 
 # Template file
-TEMPLATE_FILE = "Oktober Newsletter.pptx"
+TEMPLATE_FILE = "/Users/romansivirin/Z_Newsletter_Automation/Oktober Newsletter.pptx"

@@ -185,12 +185,19 @@ def _header(slide, logo_bytes):
 
 
 def _footer(slide, logo_bytes, page_num):
+    # Footer background bar
     _rect(slide, Inches(-0.02), FOOTER_Y, W + Inches(0.04), FOOTER_H, BAR_GRAY)
+
+    # Footer text: IBM copyright
     _tb(slide, Inches(0.10), Inches(11.44), Inches(2.20), Inches(0.22),
-        "© 2026 IBM Corporation", 6, color=WHITE)
+        "© 2026 IBM Corporation", 8, color=NEAR_BLACK)  # Adjusted font size and color
+
+    # Footer text: Page number
     _tb(slide, Inches(3.90), Inches(11.36), Inches(0.50), Inches(0.28),
-        str(page_num), 8, color=WHITE, align=PP_ALIGN.CENTER)
-    _picture(slide, logo_bytes, Inches(7.16), Inches(11.31), Inches(0.82), Inches(0.33))
+        str(page_num), 12, color=NEAR_BLACK, align=PP_ALIGN.CENTER)  # Updated font size to 12
+
+    # Footer logo
+    _picture(slide, logo_bytes, Inches(7.10), Inches(11.25), Inches(0.90), Inches(0.35))  # Adjusted position and size for consistency
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -295,6 +302,8 @@ def _move_before_last(prs):
 def _content_slide(prs, articles, page_num, first_num, logo):
     slide = _new_slide(prs)
     _header(slide, logo)
+
+    # Apply the same footer logic as the last slide
     _footer(slide, logo, page_num)
 
     n = len(articles)
@@ -476,6 +485,26 @@ def build_newsletter(articles, month, year, issue_number,
     # ── Abschlussfolie: Header-Balken + Logo hinzufügen ──────────────────────
     closing_slide = list(prs.slides)[-1]
     _header(closing_slide, logo)
+
+    # Remove the old all-caps heading if present
+    for shape in list(closing_slide.shapes):
+        if shape.has_text_frame:
+            text = shape.text_frame.text.strip()
+            if text == "ZUSÄTZLICHE INFORMATIONEN":
+                closing_slide.shapes._spTree.remove(shape._element)
+
+    # Add a new heading textbox matching the content slide style
+    _tb(closing_slide, TEXT_L_FULL, CONTENT_TOP, TEXT_W_FULL, Inches(0.45),
+        "Zusätzliche Informationen", 16, bold=True, color=NEAR_BLACK)
+
+    # Adjust the 'Besuchen Sie uns...' textbox to be below the heading
+    for shape in closing_slide.shapes:
+        if shape.has_text_frame:
+            text = shape.text_frame.text.strip()
+            if text.startswith("Besuchen Sie uns"):
+                shape.left = TEXT_L_FULL
+                shape.width = TEXT_W_FULL
+                shape.top = CONTENT_TOP + Inches(0.55)
 
     prs.save(out)
     return out
