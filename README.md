@@ -70,12 +70,24 @@ python main.py
    pip install -r requirements.txt
    ```
 
+### Hinweis für macOS-Nutzer
+Falls der Befehl `pip` nicht gefunden wird, verwenden Sie stattdessen `pip3`:
+```bash
+pip3 install -r requirements.txt
+```
+
 ### Schritt 3: Anwendung starten
 1. Starten Sie die Anwendung mit:
    ```bash
    python3 -m streamlit run app.py
    ```
 2. Ein Browserfenster öffnet sich automatisch. Falls nicht, kopieren Sie den angezeigten Link (z. B. `http://localhost:8501`) und fügen Sie ihn in Ihren Browser ein.
+
+### Hinweis für Streamlit
+Falls der Befehl `streamlit` nicht gefunden wird, starten Sie die Anwendung mit folgendem Befehl:
+```bash
+python3 -m streamlit run app.py
+```
 
 ### Schritt 4: Anwendung nutzen
 1. Geben Sie Ihren Groq API Key in der Seitenleiste ein.
