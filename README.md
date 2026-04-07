@@ -49,3 +49,36 @@ python main.py
 ├── Oktober Newsletter.pptx   # Newsletter-Template
 └── requirements.txt
 ```
+
+## Einfache Schritt-für-Schritt-Anleitung für Laien
+
+### Voraussetzungen
+- Python 3.9 oder höher ist installiert
+- Git ist installiert
+
+### Schritt 1: Projekt herunterladen
+1. Öffnen Sie das Terminal.
+2. Führen Sie folgenden Befehl aus:
+   ```bash
+   git clone git@github.com:roman6s/Z_Newsletter_Automation.git
+   cd Z_Newsletter_Automation
+   ```
+
+### Schritt 2: Abhängigkeiten installieren
+1. Geben Sie diesen Befehl ein:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### Schritt 3: Anwendung starten
+1. Starten Sie die Anwendung mit:
+   ```bash
+   python3 -m streamlit run app.py
+   ```
+2. Ein Browserfenster öffnet sich automatisch. Falls nicht, kopieren Sie den angezeigten Link (z. B. `http://localhost:8501`) und fügen Sie ihn in Ihren Browser ein.
+
+### Schritt 4: Anwendung nutzen
+1. Geben Sie Ihren Groq API Key in der Seitenleiste ein.
+2. Wählen Sie den gewünschten Zeitraum aus.
+3. Klicken Sie auf **Newsletter erstellen**.
+4. Laden Sie die erstellte PPTX-Datei herunter.
