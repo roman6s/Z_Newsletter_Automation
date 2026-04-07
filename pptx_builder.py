@@ -42,8 +42,8 @@ GERMAN_MONTHS = {
 # ── Geometrie (A4 Hochformat) ─────────────────────────────────────────────────
 W, H          = Inches(8.27), Inches(11.69)
 HEADER_H      = Inches(0.66)
-FOOTER_Y      = Inches(11.13)
-FOOTER_H      = Inches(0.56)
+FOOTER_Y      = Inches(11.10)  # Move footer bar closer to the bottom
+FOOTER_H      = Inches(0.65)   # Make footer bar taller
 
 # Seitenleiste (Cover)
 SIDE_W        = Inches(2.80)
@@ -482,21 +482,18 @@ def build_newsletter(articles, month, year, issue_number,
         first_num = 2 + page_idx * 2
         _content_slide(prs, group, page_idx + 2, first_num, logo)
 
-    # ── Abschlussfolie: Header-Balken + Logo hinzufügen ──────────────────────
+    # ── Abschlussfolie: Header-Balken + Logo + Footer mit Seitennummer ──────
     closing_slide = list(prs.slides)[-1]
     _header(closing_slide, logo)
-
     # Remove the old all-caps heading if present
     for shape in list(closing_slide.shapes):
         if shape.has_text_frame:
             text = shape.text_frame.text.strip()
             if text == "ZUSÄTZLICHE INFORMATIONEN":
                 closing_slide.shapes._spTree.remove(shape._element)
-
     # Add a new heading textbox matching the content slide style
     _tb(closing_slide, TEXT_L_FULL, CONTENT_TOP, TEXT_W_FULL, Inches(0.45),
         "Zusätzliche Informationen", 16, bold=True, color=NEAR_BLACK)
-
     # Adjust the 'Besuchen Sie uns...' textbox to be below the heading
     for shape in closing_slide.shapes:
         if shape.has_text_frame:
@@ -505,6 +502,7 @@ def build_newsletter(articles, month, year, issue_number,
                 shape.left = TEXT_L_FULL
                 shape.width = TEXT_W_FULL
                 shape.top = CONTENT_TOP + Inches(0.55)
-
+    # Add footer with correct page number for the last slide
+    _footer(closing_slide, logo, len(prs.slides))
     prs.save(out)
     return out
