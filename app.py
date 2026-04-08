@@ -67,7 +67,6 @@ with st.sidebar:
         help="llama-3.3-70b: beste Qualität | llama-3.1-8b: schneller",
     )
 
-    # Automatisch speichern wenn Key eingegeben wurde
     if groq_key and (groq_key != saved.get("groq_key") or model != saved.get("model")):
         save_config({"groq_key": groq_key, "model": model})
 
@@ -118,23 +117,22 @@ if st.button("🚀 Newsletter erstellen", type="primary",
     issue_str = issue_number.strip() or "?"
     save_config({"groq_key": groq_key, "model": model, "last_issue": issue_str})
 
-    # Dynamisch Key + Modell setzen (ohne config.py anzufassen)
     import config
     config.GROQ_API_KEY = groq_key
 
     import summarizer
     summarizer.MODEL = model
 
-    # ── Schritt 1: Artikel scrapen ────────────────────────────────────────────
-    with st.status("⏳ Artikel werden geladen...", expanded=True) as status:
+    with st.status("⏳ Daten werden geladen...", expanded=True) as status:
 
+        # ── Schritt 1: Artikel scrapen ────────────────────────────────────────
         st.write(f"📡 Suche Artikel: {start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}")
 
         try:
             from scraper import fetch_articles_in_range
             articles = fetch_articles_in_range(start_date, end_date, verbose=False)
         except Exception as e:
-            status.update(label="❌ Fehler beim Laden", state="error")
+            status.update(label="❌ Fehler beim Laden der Artikel", state="error")
             st.error(f"Fehler: {e}")
             st.stop()
 
@@ -150,7 +148,40 @@ if st.button("🚀 Newsletter erstellen", type="primary",
         for a in articles:
             st.write(f"  - {a.title[:75]}")
 
-        # ── Schritt 2: Zusammenfassen ─────────────────────────────────────────
+        # ── Schritt 2: Events scrapen ─────────────────────────────────────────
+        # Upcoming events: vom Ende des Newsletter-Zeitraums, 1 Monat voraus
+        import calendar as _cal
+        _m = end_date.month - 1 + 1
+        events_start = end_date
+        events_end = end_date.replace(
+            year=end_date.year + _m // 12,
+            month=_m % 12 + 1,
+            day=min(end_date.day, _cal.monthrange(end_date.year + _m // 12, _m % 12 + 1)[1]),
+        )
+        st.write(
+            f"📅 Suche Upcoming Events: "
+            f"{events_start.strftime('%d.%m.%Y')} – {events_end.strftime('%d.%m.%Y')}"
+        )
+        events = []
+        events_truncated = False
+        try:
+            from event_scraper import fetch_events_in_range
+            events = fetch_events_in_range(events_start, events_end, verbose=False)
+            if len(events) > 10:
+                events = events[:10]
+                events_truncated = True
+            if events:
+                st.write(f"✅ **{len(events)} Events gefunden{' (auf 10 begrenzt)' if events_truncated else ''}:**")
+                for ev in events:
+                    date_str = ev.event_date.strftime("%d.%m.%Y")
+                    st.write(f"  - {date_str}: {ev.title[:60]}")
+            else:
+                st.write("ℹ️ Keine Events für diesen Zeitraum gefunden.")
+        except Exception as e:
+            st.warning(f"Events konnten nicht geladen werden (Newsletter wird trotzdem erstellt): {e}")
+            events = []
+
+        # ── Schritt 3: Zusammenfassen ─────────────────────────────────────────
         st.write(f"🤖 Zusammenfassungen werden erstellt ({model})...")
         progress_bar = st.progress(0, text="Starte...")
 
@@ -182,7 +213,20 @@ if st.button("🚀 Newsletter erstellen", type="primary",
         progress_bar.empty()
         st.write("✅ Alle Zusammenfassungen fertig.")
 
-        # ── Schritt 3: PPTX erstellen ─────────────────────────────────────────
+        # ── Schritt 4: Events in Dicts umwandeln ──────────────────────────────
+        event_dicts = [
+            {
+                "title": ev.title,
+                "event_date": ev.event_date,
+                "time_str": ev.time_str,
+                "location": ev.location,
+                "description": ev.description,
+                "url": ev.url,
+            }
+            for ev in events
+        ] if events is not None else []
+
+        # ── Schritt 5: PPTX erstellen ─────────────────────────────────────────
         st.write("📄 PPTX wird generiert...")
 
         try:
@@ -192,6 +236,8 @@ if st.button("🚀 Newsletter erstellen", type="primary",
                 month=end_date.month,
                 year=end_date.year,
                 issue_number=issue_str,
+                events=event_dicts,
+                events_truncated=events_truncated,
             )
         except Exception as e:
             status.update(label="❌ Fehler bei PPTX-Erstellung", state="error")
@@ -205,7 +251,6 @@ if st.button("🚀 Newsletter erstellen", type="primary",
         pptx_bytes = f.read()
 
     filename = os.path.basename(output_path)
-
     st.success(f"**{filename}** wurde erfolgreich erstellt!")
 
     st.download_button(
@@ -217,10 +262,30 @@ if st.button("🚀 Newsletter erstellen", type="primary",
         type="primary",
     )
 
-    # ── Artikel-Vorschau ──────────────────────────────────────────────────────
+    # ── Vorschau ──────────────────────────────────────────────────────────────
     with st.expander(f"📋 {len(summarized)} Artikel im Newsletter"):
         for a in summarized:
             st.markdown(f"**{a['title']}**")
-            st.caption(f"{a['author']} · {a['published'].strftime('%d.%m.%Y')} · [Originalartikel →]({a['url']})")
+            st.caption(
+                f"{a['author']} · {a['published'].strftime('%d.%m.%Y')} "
+                f"· [Originalartikel →]({a['url']})"
+            )
             st.markdown(a["summary"])
             st.divider()
+
+    if events:
+        with st.expander(f"📅 {len(events)} Events im Newsletter"):
+            for ev in events:
+                date_str = ev.event_date.strftime("%d.%m.%Y")
+                parts = [date_str]
+                if ev.time_str:
+                    parts.append(ev.time_str)
+                if ev.location:
+                    parts.append(ev.location)
+                st.markdown(f"**{ev.title}**")
+                st.caption("  ·  ".join(parts))
+                if ev.description:
+                    st.markdown(ev.description)
+                if ev.url:
+                    st.markdown(f"[→ Mehr Informationen]({ev.url})")
+                st.divider()
