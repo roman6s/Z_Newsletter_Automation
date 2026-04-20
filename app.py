@@ -11,7 +11,36 @@ from pathlib import Path
 
 import streamlit as st
 
-# ── Lokale Konfiguration speichern/laden ──────────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="IBM Z Newsletter",
+    page_icon="📰",
+    layout="centered",
+)
+
+# ── Passwort-Schutz ───────────────────────────────────────────────────────────
+APP_PASSWORD = st.secrets.get("APP_PASSWORD", os.environ.get("APP_PASSWORD", ""))
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("📰 IBM Z Newsletter")
+    st.caption("IBM Z DACH Community – Newsletter Automation")
+    st.divider()
+    pwd = st.text_input("Passwort", type="password", placeholder="Passwort eingeben...")
+    if st.button("Anmelden", type="primary", use_container_width=True):
+        if APP_PASSWORD and pwd == APP_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Falsches Passwort.")
+    st.stop()
+
+# ── Groq API Key aus Secrets / Umgebungsvariable ──────────────────────────────
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
+
+# ── Lokale Konfiguration speichern/laden (nur Issue-Nummer) ───────────────────
 CONFIG_FILE = Path(".saved_config.json")
 
 def load_saved_config() -> dict:
@@ -30,33 +59,17 @@ def save_config(data: dict):
 
 saved = load_saved_config()
 
-# ── Page config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="IBM Z Newsletter",
-    page_icon="📰",
-    layout="centered",
-)
-
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("📰 IBM Z Newsletter Automation")
 st.caption("Erstellt automatisch einen Newsletter aus den aktuellen IBM Z DACH Blog-Artikeln.")
 st.divider()
 
-# ── Sidebar: API-Einstellungen ─────────────────────────────────────────────────
+# ── Sidebar: Modell-Auswahl ───────────────────────────────────────────────────
 with st.sidebar:
-    st.header("🔑 API-Einstellungen")
-    st.markdown("Einmalig ausfüllen – wird lokal gespeichert.")
-
-    groq_key = st.text_input(
-        "Groq API Key",
-        value=saved.get("groq_key", ""),
-        type="password",
-        placeholder="gsk_...",
-        help="Kostenlosen Key erstellen unter console.groq.com",
-    )
+    st.header("⚙️ Einstellungen")
 
     model = st.selectbox(
-        "Modell",
+        "KI-Modell",
         options=[
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
@@ -67,15 +80,10 @@ with st.sidebar:
         help="llama-3.3-70b: beste Qualität | llama-3.1-8b: schneller",
     )
 
-    if groq_key and (groq_key != saved.get("groq_key") or model != saved.get("model")):
-        save_config({"groq_key": groq_key, "model": model})
-
     st.markdown("---")
-    if not groq_key:
-        st.warning("⚠️ Noch kein API Key eingegeben.")
-        st.markdown("[→ Kostenlos registrieren](https://console.groq.com)")
-    else:
-        st.success("✅ API Key gespeichert")
+    if st.button("Abmelden", use_container_width=True):
+        st.session_state.authenticated = False
+        st.rerun()
 
 # ── Hauptbereich ──────────────────────────────────────────────────────────────
 col1, col2 = st.columns(2)
@@ -103,22 +111,21 @@ issue_number = st.text_input(
 st.divider()
 
 # ── Start-Button ──────────────────────────────────────────────────────────────
-start_disabled = not groq_key
-if start_disabled:
-    st.info("👈 Bitte zuerst den Groq API Key in der Seitenleiste eingeben.")
+if not GROQ_API_KEY:
+    st.error("⚠️ Kein Groq API Key konfiguriert. Bitte in den Streamlit Secrets hinterlegen.")
+    st.stop()
 
-if st.button("🚀 Newsletter erstellen", type="primary",
-             use_container_width=True, disabled=start_disabled):
+if st.button("🚀 Newsletter erstellen", type="primary", use_container_width=True):
 
     if start_date > end_date:
         st.error("Das Startdatum muss vor dem Enddatum liegen.")
         st.stop()
 
     issue_str = issue_number.strip() or "?"
-    save_config({"groq_key": groq_key, "model": model, "last_issue": issue_str})
+    save_config({"model": model, "last_issue": issue_str})
 
     import config
-    config.GROQ_API_KEY = groq_key
+    config.GROQ_API_KEY = GROQ_API_KEY
 
     import summarizer
     summarizer.MODEL = model
@@ -149,7 +156,6 @@ if st.button("🚀 Newsletter erstellen", type="primary",
             st.write(f"  - {a.title[:75]}")
 
         # ── Schritt 2: Events scrapen ─────────────────────────────────────────
-        # Upcoming events: vom Ende des Newsletter-Zeitraums, 1 Monat voraus
         import calendar as _cal
         _m = end_date.month - 1 + 1
         events_start = end_date

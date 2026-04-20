@@ -2,6 +2,7 @@
 .env
 *.env
 .saved_config.json
+.streamlit/secrets.toml
 
 # Output (generierte Newsletter)
 output/
