@@ -22,14 +22,18 @@ BLOG_URL = (
     "recent-community-blogs?CommunityKey=9a8b7fc3-b167-447a-8e14-adf93406eccc"
 )
 
-# Max articles per newsletter (template capacity: 4 slides × 2 articles)
-MAX_ARTICLES = 8
+# Events URL
+EVENTS_URL = (
+    "https://community.ibm.com/community/user/events/calendar"
+    "?CommunityKey=9a8b7fc3-b167-447a-8e14-adf93406eccc"
+)
 
 # Summary language
 SUMMARY_LANGUAGE = "Deutsch"
 
-# Output directory
-OUTPUT_DIR = "output"
+# Output directory (relative to this file)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
-# Template file
-TEMPLATE_FILE = "/Users/romansivirin/Z_Newsletter_Automation/Oktober Newsletter.pptx"
+# Template file (relative to this file – works regardless of working directory)
+TEMPLATE_FILE = os.path.join(BASE_DIR, "Oktober Newsletter.pptx")
