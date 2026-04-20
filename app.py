@@ -37,10 +37,7 @@ if not st.session_state.authenticated:
             st.error("Falsches Passwort.")
     st.stop()
 
-# ── Groq API Key aus Secrets / Umgebungsvariable ──────────────────────────────
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
-
-# ── Lokale Konfiguration speichern/laden (nur Issue-Nummer) ───────────────────
+# ── Lokale Konfiguration speichern/laden ─────────────────────────────────────
 CONFIG_FILE = Path(".saved_config.json")
 
 def load_saved_config() -> dict:
@@ -64,8 +61,34 @@ st.title("📰 IBM Z Newsletter Automation")
 st.caption("Erstellt automatisch einen Newsletter aus den aktuellen IBM Z DACH Blog-Artikeln.")
 st.divider()
 
-# ── Sidebar: Modell-Auswahl ───────────────────────────────────────────────────
+# ── Sidebar: API-Key + Modell ─────────────────────────────────────────────────
 with st.sidebar:
+    st.header("🔑 Groq API Key")
+
+    with st.expander("Noch keinen Key? Hier entlang →", expanded=not saved.get("groq_key")):
+        st.markdown(
+            "**Einmalig, kostenlos, 2 Minuten:**\n\n"
+            "1. [console.groq.com](https://console.groq.com) öffnen\n"
+            "2. Kostenlosen Account erstellen\n"
+            "3. **API Keys → Create API Key**\n"
+            "4. Key hier einfügen & Enter drücken"
+        )
+
+    groq_key = st.text_input(
+        "API Key",
+        value=saved.get("groq_key", ""),
+        type="password",
+        placeholder="gsk_...",
+        label_visibility="collapsed",
+    )
+
+    if groq_key and groq_key != saved.get("groq_key"):
+        save_config({**saved, "groq_key": groq_key})
+
+    if groq_key:
+        st.success("✅ Key gespeichert")
+
+    st.divider()
     st.header("⚙️ Einstellungen")
 
     model = st.selectbox(
@@ -79,6 +102,9 @@ with st.sidebar:
               .index(saved.get("model", "llama-3.3-70b-versatile")),
         help="llama-3.3-70b: beste Qualität | llama-3.1-8b: schneller",
     )
+
+    if groq_key and model != saved.get("model"):
+        save_config({**saved, "model": model})
 
     st.markdown("---")
     if st.button("Abmelden", use_container_width=True):
@@ -111,21 +137,21 @@ issue_number = st.text_input(
 st.divider()
 
 # ── Start-Button ──────────────────────────────────────────────────────────────
-if not GROQ_API_KEY:
-    st.error("⚠️ Kein Groq API Key konfiguriert. Bitte in den Streamlit Secrets hinterlegen.")
-    st.stop()
+if not groq_key:
+    st.info("👈 Bitte zuerst den Groq API Key in der Seitenleiste eingeben.")
 
-if st.button("🚀 Newsletter erstellen", type="primary", use_container_width=True):
+if st.button("🚀 Newsletter erstellen", type="primary",
+             use_container_width=True, disabled=not groq_key):
 
     if start_date > end_date:
         st.error("Das Startdatum muss vor dem Enddatum liegen.")
         st.stop()
 
     issue_str = issue_number.strip() or "?"
-    save_config({"model": model, "last_issue": issue_str})
+    save_config({**saved, "model": model, "last_issue": issue_str})
 
     import config
-    config.GROQ_API_KEY = GROQ_API_KEY
+    config.GROQ_API_KEY = groq_key
 
     import summarizer
     summarizer.MODEL = model
