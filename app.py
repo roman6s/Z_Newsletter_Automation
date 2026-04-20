@@ -61,50 +61,117 @@ st.title("📰 IBM Z Newsletter Automation")
 st.caption("Erstellt automatisch einen Newsletter aus den aktuellen IBM Z DACH Blog-Artikeln.")
 st.divider()
 
-# ── Sidebar: API-Key + Modell ─────────────────────────────────────────────────
+# ── Provider-Konfiguration ────────────────────────────────────────────────────
+PROVIDERS = {
+    "Groq": {
+        "base_url":    "https://api.groq.com/openai/v1",
+        "placeholder": "gsk_...",
+        "models":      ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+        "key_link":    "https://console.groq.com",
+        "key_label":   "console.groq.com",
+        "hint":        "Kostenlos · schnell · empfohlen",
+    },
+    "OpenAI": {
+        "base_url":    None,
+        "placeholder": "sk-...",
+        "models":      ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
+        "key_link":    "https://platform.openai.com/api-keys",
+        "key_label":   "platform.openai.com/api-keys",
+        "hint":        "GPT-Modelle (kostenpflichtig)",
+    },
+    "Google Gemini": {
+        "base_url":    "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "placeholder": "AIza...",
+        "models":      ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+        "key_link":    "https://aistudio.google.com/apikey",
+        "key_label":   "aistudio.google.com",
+        "hint":        "Gemini-Modelle · kostenloses Kontingent verfügbar",
+    },
+    "Andere (OpenAI-kompatibel)": {
+        "base_url":    None,   # User gibt ein
+        "placeholder": "",
+        "models":      [],     # User gibt ein
+        "key_link":    None,
+        "key_label":   None,
+        "hint":        "Mistral, Together AI, Azure OpenAI, …",
+    },
+}
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("🔑 Groq API Key")
+    st.header("🤖 KI-Anbieter")
 
-    with st.expander("Noch keinen Key? Hier entlang →", expanded=not saved.get("groq_key")):
-        st.markdown(
-            "**Einmalig, kostenlos, 2 Minuten:**\n\n"
-            "1. [console.groq.com](https://console.groq.com) öffnen\n"
-            "2. Kostenlosen Account erstellen\n"
-            "3. **API Keys → Create API Key**\n"
-            "4. Key hier einfügen & Enter drücken"
-        )
+    provider_name = st.selectbox(
+        "Anbieter",
+        options=list(PROVIDERS.keys()),
+        index=list(PROVIDERS.keys()).index(saved.get("provider", "Groq")),
+        label_visibility="collapsed",
+    )
+    cfg = PROVIDERS[provider_name]
+    st.caption(cfg["hint"])
 
-    groq_key = st.text_input(
+    # Anleitung: nur bei Groq standardmäßig aufgeklappt (empfohlen)
+    has_key = bool(saved.get(f"api_key_{provider_name}"))
+    with st.expander(
+        "Noch keinen Key? Hier entlang →" if not has_key else "Key ändern",
+        expanded=not has_key and provider_name == "Groq",
+    ):
+        if provider_name == "Groq":
+            st.markdown(
+                "**Einmalig, kostenlos, 2 Minuten:**\n\n"
+                "1. [console.groq.com](https://console.groq.com) öffnen\n"
+                "2. Account erstellen (Google-Login möglich)\n"
+                "3. **API Keys → Create API Key**\n"
+                "4. Key unten einfügen"
+            )
+        elif cfg["key_link"]:
+            st.markdown(f"Key erstellen: [{cfg['key_label']}]({cfg['key_link']})")
+
+    api_key = st.text_input(
         "API Key",
-        value=saved.get("groq_key", ""),
+        value=saved.get(f"api_key_{provider_name}", ""),
         type="password",
-        placeholder="gsk_...",
+        placeholder=cfg["placeholder"] or "API Key...",
         label_visibility="collapsed",
     )
 
-    if groq_key and groq_key != saved.get("groq_key"):
-        save_config({**saved, "groq_key": groq_key})
+    # Für "Andere": Base URL eingeben
+    if provider_name == "Andere (OpenAI-kompatibel)":
+        base_url = st.text_input(
+            "API Base URL",
+            value=saved.get("custom_base_url", ""),
+            placeholder="https://api.example.com/v1",
+        )
+    else:
+        base_url = cfg["base_url"]
 
-    if groq_key:
+    if api_key:
         st.success("✅ Key gespeichert")
 
     st.divider()
-    st.header("⚙️ Einstellungen")
+    st.header("⚙️ Modell")
 
-    model = st.selectbox(
-        "KI-Modell",
-        options=[
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-        ],
-        index=["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
-              .index(saved.get("model", "llama-3.3-70b-versatile")),
-        help="llama-3.3-70b: beste Qualität | llama-3.1-8b: schneller",
-    )
+    if cfg["models"]:
+        saved_model = saved.get(f"model_{provider_name}", cfg["models"][0])
+        model_idx   = cfg["models"].index(saved_model) if saved_model in cfg["models"] else 0
+        model = st.selectbox("Modell", options=cfg["models"], index=model_idx,
+                             label_visibility="collapsed")
+    else:
+        model = st.text_input("Modell (Name eingeben)",
+                              value=saved.get(f"model_{provider_name}", ""),
+                              placeholder="z.B. mistral-large-latest")
 
-    if groq_key and model != saved.get("model"):
-        save_config({**saved, "model": model})
+    # Konfiguration speichern
+    new_cfg = {
+        **saved,
+        "provider": provider_name,
+        f"api_key_{provider_name}": api_key,
+        f"model_{provider_name}": model,
+    }
+    if provider_name == "Andere (OpenAI-kompatibel)":
+        new_cfg["custom_base_url"] = base_url
+    save_config(new_cfg)
+    saved = new_cfg
 
     st.markdown("---")
     if st.button("Abmelden", use_container_width=True):
@@ -137,24 +204,25 @@ issue_number = st.text_input(
 st.divider()
 
 # ── Start-Button ──────────────────────────────────────────────────────────────
-if not groq_key:
-    st.info("👈 Bitte zuerst den Groq API Key in der Seitenleiste eingeben.")
+ready = bool(api_key) and (bool(base_url) if provider_name == "Andere (OpenAI-kompatibel)" else True) and bool(model)
+
+if not ready:
+    st.info("👈 Bitte zuerst API Key und Modell in der Seitenleiste eingeben.")
 
 if st.button("🚀 Newsletter erstellen", type="primary",
-             use_container_width=True, disabled=not groq_key):
+             use_container_width=True, disabled=not ready):
 
     if start_date > end_date:
         st.error("Das Startdatum muss vor dem Enddatum liegen.")
         st.stop()
 
     issue_str = issue_number.strip() or "?"
-    save_config({**saved, "model": model, "last_issue": issue_str})
-
-    import config
-    config.GROQ_API_KEY = groq_key
+    save_config({**saved, "last_issue": issue_str})
 
     import summarizer
-    summarizer.MODEL = model
+    summarizer.API_KEY  = api_key
+    summarizer.BASE_URL = base_url or ""
+    summarizer.MODEL    = model
 
     with st.status("⏳ Daten werden geladen...", expanded=True) as status:
 

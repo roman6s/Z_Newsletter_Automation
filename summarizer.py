@@ -1,31 +1,44 @@
 """
-Summarizes blog articles in German using the Groq API (free tier).
-Get your free API key at: https://console.groq.com
+Summarizes blog articles in German using any OpenAI-compatible API.
+
+Supported providers (all use the same interface):
+  - Groq       https://console.groq.com          (kostenlos, empfohlen)
+  - OpenAI     https://platform.openai.com        (GPT-Modelle)
+  - Google      https://aistudio.google.com        (Gemini-Modelle)
+  - Andere     Beliebige OpenAI-kompatible API
+
+Set API_KEY, BASE_URL and MODEL before calling _build_client() or
+summarize_article(), or rely on the CLI fallback via config.GROQ_API_KEY.
 """
 
 import time
 
-from groq import Groq
+from openai import OpenAI
 
 from config import GROQ_API_KEY, SUMMARY_LANGUAGE
 from scraper import Article
 
-MODEL = "llama-3.3-70b-versatile"
+# ── Konfiguration (wird von app.py gesetzt) ───────────────────────────────────
+MODEL    = "llama-3.3-70b-versatile"
+API_KEY  = ""          # gesetzt von app.py; Fallback: config.GROQ_API_KEY
+BASE_URL = "https://api.groq.com/openai/v1"   # Groq als Standard
+
 MAX_RETRIES = 3
 
 
 def _build_client():
-    if not GROQ_API_KEY:
+    key = API_KEY or GROQ_API_KEY
+    if not key:
         raise ValueError(
-            "Kein Groq API Key gefunden!\n"
-            "Kostenlosen Key bekommst du unter: https://console.groq.com\n"
-            "Dann in config.py eintragen: GROQ_API_KEY = 'dein-key'"
+            "Kein API Key gefunden!\n"
+            "Kostenlosen Groq-Key bekommst du unter: https://console.groq.com"
         )
-    return Groq(api_key=GROQ_API_KEY)
+    url = BASE_URL or "https://api.groq.com/openai/v1"
+    return OpenAI(api_key=key, base_url=url)
 
 
 def summarize_article(article: Article, client=None) -> str:
-    """Returns a German summary of the article (3-5 sentences)."""
+    """Returns a German summary of the article (2-3 paragraphs)."""
     if client is None:
         client = _build_client()
 
@@ -52,7 +65,7 @@ Aufgabe: Schreibe eine strukturierte Zusammenfassung auf Deutsch mit 2-3 Absätz
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=400,
+                max_tokens=700,
                 temperature=0.3,
             )
             return response.choices[0].message.content.strip()
