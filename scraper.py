@@ -7,7 +7,7 @@ import re
 import time
 from datetime import date, datetime
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -70,41 +70,56 @@ def _extract_entries(soup: BeautifulSoup) -> List[dict]:
 
 
 def _get_hidden_fields(soup: BeautifulSoup) -> dict:
-    """Extract ASP.NET hidden form fields needed for postback pagination."""
+    """Collect ALL hidden input fields – required for ASP.NET postback (incl. CSRF token)."""
     fields = {}
-    for field_id in ("__VIEWSTATE", "__VIEWSTATEGENERATOR", "__EVENTVALIDATION"):
-        tag = soup.find("input", {"id": field_id})
-        if tag:
-            fields[field_id] = tag.get("value", "")
-    fields["ctl00$DefaultMasterHdnCommunityKey"] = "9a8b7fc3-b167-447a-8e14-adf93406eccc"
-    fields["ScriptManager1_TSM"] = ""
-    fields["StyleSheetManager1_TSSM"] = ""
+    for inp in soup.find_all("input", type="hidden"):
+        name = inp.get("name", "")
+        if name:
+            fields[name] = inp.get("value", "")
     return fields
 
 
-def _get_page_count(soup: BeautifulSoup) -> int:
-    """Determine total number of pages from pager HTML."""
-    # Pager contains numbered links via __doPostBack
-    pager = soup.find("div", id=re.compile(r"SearchResultDataPager"))
-    if not pager:
-        return 1
-    # Count ctl01$ctl0X links (page numbers)
-    links = pager.find_all("a", href=re.compile(r"__doPostBack"))
-    # Last link is usually "next >" - page numbers are all but last
-    # Alternatively just look for the last numbered link
-    page_links = [
-        a for a in soup.find_all("a", href=True)
-        if "SearchResultDataPager$ctl01$ctl" in str(a.get("href", ""))
-    ]
-    return max(len(page_links), 1)
+def _find_next_pager_target(
+    soup: BeautifulSoup,
+    current_page: int,
+    visited: set,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Parse the rendered pager HTML and return the postback (target, arg) for
+    the next page to fetch.
 
+    Strategy:
+      1. Look for a link whose visible text equals str(current_page + 1).
+      2. Fallback: look for a "next group" arrow link (>, >>, », …).
+      3. Return (None, None) when no further navigation is available.
 
-def _postback_target_for_page(page: int) -> str:
-    """Return the __EVENTTARGET for the given page number (1-based)."""
-    # Page 1 = ctl01, page 2 = ctl02, ... page 5 = ctl05
-    # After 5 pages there may be a "next" group (ctl02$ctl00)
-    # Simple mapping for first set of pages
-    return f"ctl00$MainCopy$ctl19$SearchResultDataPager$ctl01$ctl{page:02d}"
+    Note: visited stores (target, arg) tuples – NOT just target strings –
+    because all pager links share the same ASP.NET target control name but
+    use different arguments to identify the page.
+    """
+    next_page_text = str(current_page + 1)
+    arrow_texts = {">", ">>", "»", "›", "...", "Next", "Nächste"}
+
+    arrow_candidate: Tuple[Optional[str], Optional[str]] = (None, None)
+
+    for a in soup.find_all("a", href=True):
+        href = a.get("href", "")
+        m = re.search(r"__doPostBack\('([^']+)','([^']*)'\)", href)
+        if not m:
+            continue
+        target = m.group(1)
+        arg = m.group(2)
+        if "Pager" not in target:
+            continue
+        if (target, arg) in visited:
+            continue
+        text = a.get_text(strip=True)
+        if text == next_page_text:
+            return target, arg
+        if text in arrow_texts and arrow_candidate == (None, None):
+            arrow_candidate = (target, arg)
+
+    return arrow_candidate
 
 
 def fetch_articles_in_range(
@@ -120,99 +135,79 @@ def fetch_articles_in_range(
     session.headers.update(HEADERS)
 
     if verbose:
-        print(f"Fetching blog listing page...")
+        print("Fetching blog listing page...")
 
     resp = session.get(BLOG_URL, timeout=30)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    all_entries = []
-    stop_early = False  # Stop when we go past start_date
+    all_entries: List[dict] = []
+    visited_targets: set = set()
+    stop_early = False
+    current_page = 1
+    max_pages = 100  # safety ceiling
 
-    # Collect from page 1
-    page_entries = _extract_entries(soup)
-    for e in page_entries:
-        if e["date"] > end_date:
-            continue
-        if e["date"] < start_date:
-            stop_early = True
+    def _process_entries(entries: List[dict]) -> None:
+        nonlocal stop_early
+        for e in entries:
+            if e["date"] > end_date:
+                continue  # too new – skip, but keep paginating
+            if e["date"] < start_date:
+                stop_early = True
+                return  # gone past start_date, no need to look further
+            all_entries.append(e)
+
+    # Process page 1
+    _process_entries(_extract_entries(soup))
+
+    # Paginate through remaining pages
+    while not stop_early and current_page < max_pages:
+        target, arg = _find_next_pager_target(soup, current_page, visited_targets)
+        if target is None:
             break
-        all_entries.append(e)
 
-    if not stop_early:
-        # Paginate through remaining pages
-        page_num = 2
-        while True:
-            hidden = _get_hidden_fields(soup)
-            hidden["__EVENTTARGET"] = _postback_target_for_page(page_num)
-            hidden["__EVENTARGUMENT"] = ""
+        visited_targets.add((target, arg))
+        hidden = _get_hidden_fields(soup)
+        hidden["__EVENTTARGET"] = target
+        hidden["__EVENTARGUMENT"] = arg or ""
 
-            if verbose:
-                print(f"  Fetching page {page_num}...")
+        if verbose:
+            print(f"  Seite {current_page + 1} laden...")
 
-            try:
-                resp = session.post(BLOG_URL, data=hidden, timeout=30)
-                resp.raise_for_status()
-            except Exception as e:
-                print(f"  Warning: Could not fetch page {page_num}: {e}")
-                break
+        try:
+            resp = session.post(BLOG_URL, data=hidden, timeout=30)
+            resp.raise_for_status()
+        except Exception as e:
+            print(f"  Warnung: Seite {current_page + 1} konnte nicht geladen werden: {e}")
+            break
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            page_entries = _extract_entries(soup)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        entries = _extract_entries(soup)
 
-            if not page_entries:
-                # Try "next" group button
-                if verbose:
-                    print(f"  No entries on page {page_num}, trying next group...")
-                hidden["__EVENTTARGET"] = (
-                    "ctl00$MainCopy$ctl19$SearchResultDataPager$ctl02$ctl00"
-                )
-                try:
-                    resp = session.post(BLOG_URL, data=hidden, timeout=30)
-                    resp.raise_for_status()
-                    soup = BeautifulSoup(resp.text, "html.parser")
-                    page_entries = _extract_entries(soup)
-                    page_num = 2  # Reset within new group
-                except Exception:
-                    break
+        if not entries:
+            break
 
-            if not page_entries:
-                break
-
-            added_any = False
-            for e in page_entries:
-                if e["date"] > end_date:
-                    continue
-                if e["date"] < start_date:
-                    stop_early = True
-                    break
-                all_entries.append(e)
-                added_any = True
-
-            if stop_early or not added_any:
-                break
-
-            page_num += 1
-            time.sleep(0.5)  # Be polite
+        _process_entries(entries)
+        current_page += 1
+        time.sleep(0.5)
 
     if verbose:
         print(f"Found {len(all_entries)} articles in date range.")
 
     # Deduplicate by URL
-    seen = set()
-    unique_entries = []
+    seen: set = set()
+    unique_entries: List[dict] = []
     for e in all_entries:
         if e["url"] not in seen:
             seen.add(e["url"])
             unique_entries.append(e)
 
     # Fetch full article text
-    articles = []
+    articles: List[Article] = []
     for i, e in enumerate(unique_entries):
         if verbose:
-            print(f"  Loading article {i+1}/{len(unique_entries)}: {e['title'][:60]}...")
+            print(f"  Artikel {i+1}/{len(unique_entries)}: {e['title'][:60]}...")
         full_text, image_url = _fetch_article_content(session, e["url"])
-        # Bild sofort herunterladen (wir sind sowieso online) – spart Zeit beim PPTX-Bau
         image_bytes = b""
         if image_url:
             try:
@@ -275,20 +270,15 @@ def _fetch_article_content(session: requests.Session, url: str):
             text = text[:8000]
 
         # ── Artikelbild (IBM Community / Higher Logic) ────────────────────────
-        # Die Platform rendert Bilder teils per JS – aus dem rohen HTML extrahieren.
-        # Community-Template-GUID (Icons, Logos) überspringen:
-        # GUIDs von Community-weiten Assets (kein Artikel-spezifisches Bild)
         SKIP_GUIDS = {
-            "8b2c700c-5b4c-4e59-a864-e9ba84f18b1d",  # Community-Template
-            "dfd5be75-7434-44d5-beed-41626462dd64",   # IBM Bee / seitenweite Assets
+            "8b2c700c-5b4c-4e59-a864-e9ba84f18b1d",
+            "dfd5be75-7434-44d5-beed-41626462dd64",
         }
         SKIP_NAMES = ("icon-", "loading", "avatar", "logo", "badge", "button")
 
         image_url = ""
-
         IMG_EXT = r'[^\s"\'<>]+\.(?:jpg|jpeg|png|webp|bmp)'
 
-        # 1. Suche UploadedImages-URLs mit echter Bild-Endung
         uploaded = re.findall(
             r'https?://[^\s"\'<>]+/UploadedImages/' + IMG_EXT, html, re.I)
         for u in uploaded:
@@ -299,7 +289,6 @@ def _fetch_article_content(session: requests.Session, url: str):
             image_url = u
             break
 
-        # 2. Fallback: FeaturedImages
         if not image_url:
             featured = re.findall(
                 r'https?://[^\s"\'<>]+/FeaturedImages/' + IMG_EXT, html, re.I)
