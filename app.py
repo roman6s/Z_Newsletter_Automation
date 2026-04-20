@@ -3,11 +3,8 @@ IBM Z Newsletter Automation – Streamlit Frontend
 Run with: streamlit run app.py
 """
 
-import io
-import json
 import os
 from datetime import date
-from pathlib import Path
 
 import streamlit as st
 
@@ -37,29 +34,17 @@ if not st.session_state.authenticated:
             st.error("Falsches Passwort.")
     st.stop()
 
-# ── Lokale Konfiguration speichern/laden ─────────────────────────────────────
-CONFIG_FILE = Path(".saved_config.json")
-
-def load_saved_config() -> dict:
-    if CONFIG_FILE.exists():
-        try:
-            return json.loads(CONFIG_FILE.read_text())
-        except Exception:
-            pass
-    return {}
-
-def save_config(data: dict):
-    try:
-        CONFIG_FILE.write_text(json.dumps(data))
-    except Exception:
-        pass
-
-saved = load_saved_config()
-
-# ── Header ────────────────────────────────────────────────────────────────────
-st.title("📰 IBM Z Newsletter Automation")
-st.caption("Erstellt automatisch einen Newsletter aus den aktuellen IBM Z DACH Blog-Artikeln.")
-st.divider()
+# ── Session-State Defaults ────────────────────────────────────────────────────
+# Alle Einstellungen leben nur in der Browser-Session (sicher, kein Server-File)
+for key, default in {
+    "provider":        "Groq",
+    "api_key":         "",
+    "model":           "llama-3.3-70b-versatile",
+    "custom_base_url": "",
+    "issue_number":    "",
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 # ── Provider-Konfiguration ────────────────────────────────────────────────────
 PROVIDERS = {
@@ -88,9 +73,9 @@ PROVIDERS = {
         "hint":        "Gemini-Modelle · kostenloses Kontingent verfügbar",
     },
     "Andere (OpenAI-kompatibel)": {
-        "base_url":    None,   # User gibt ein
+        "base_url":    None,
         "placeholder": "",
-        "models":      [],     # User gibt ein
+        "models":      [],
         "key_link":    None,
         "key_label":   None,
         "hint":        "Mistral, Together AI, Azure OpenAI, …",
@@ -104,14 +89,14 @@ with st.sidebar:
     provider_name = st.selectbox(
         "Anbieter",
         options=list(PROVIDERS.keys()),
-        index=list(PROVIDERS.keys()).index(saved.get("provider", "Groq")),
+        index=list(PROVIDERS.keys()).index(st.session_state.provider),
         label_visibility="collapsed",
+        key="provider",
     )
     cfg = PROVIDERS[provider_name]
     st.caption(cfg["hint"])
 
-    # Anleitung: nur bei Groq standardmäßig aufgeklappt (empfohlen)
-    has_key = bool(saved.get(f"api_key_{provider_name}"))
+    has_key = bool(st.session_state.api_key)
     with st.expander(
         "Noch keinen Key? Hier entlang →" if not has_key else "Key ändern",
         expanded=not has_key and provider_name == "Groq",
@@ -127,51 +112,43 @@ with st.sidebar:
         elif cfg["key_link"]:
             st.markdown(f"Key erstellen: [{cfg['key_label']}]({cfg['key_link']})")
 
-    api_key = st.text_input(
+    st.text_input(
         "API Key",
-        value=saved.get(f"api_key_{provider_name}", ""),
         type="password",
         placeholder=cfg["placeholder"] or "API Key...",
         label_visibility="collapsed",
+        key="api_key",
     )
 
-    # Für "Andere": Base URL eingeben
     if provider_name == "Andere (OpenAI-kompatibel)":
-        base_url = st.text_input(
+        st.text_input(
             "API Base URL",
-            value=saved.get("custom_base_url", ""),
             placeholder="https://api.example.com/v1",
+            key="custom_base_url",
         )
-    else:
-        base_url = cfg["base_url"]
 
-    if api_key:
-        st.success("✅ Key gespeichert")
+    if st.session_state.api_key:
+        st.success("✅ Key eingegeben")
 
     st.divider()
     st.header("⚙️ Modell")
 
     if cfg["models"]:
-        saved_model = saved.get(f"model_{provider_name}", cfg["models"][0])
-        model_idx   = cfg["models"].index(saved_model) if saved_model in cfg["models"] else 0
-        model = st.selectbox("Modell", options=cfg["models"], index=model_idx,
-                             label_visibility="collapsed")
+        # Modell zurücksetzen wenn es zum neuen Anbieter nicht passt
+        if st.session_state.model not in cfg["models"]:
+            st.session_state.model = cfg["models"][0]
+        st.selectbox(
+            "Modell",
+            options=cfg["models"],
+            label_visibility="collapsed",
+            key="model",
+        )
     else:
-        model = st.text_input("Modell (Name eingeben)",
-                              value=saved.get(f"model_{provider_name}", ""),
-                              placeholder="z.B. mistral-large-latest")
-
-    # Konfiguration speichern
-    new_cfg = {
-        **saved,
-        "provider": provider_name,
-        f"api_key_{provider_name}": api_key,
-        f"model_{provider_name}": model,
-    }
-    if provider_name == "Andere (OpenAI-kompatibel)":
-        new_cfg["custom_base_url"] = base_url
-    save_config(new_cfg)
-    saved = new_cfg
+        st.text_input(
+            "Modell (Name eingeben)",
+            placeholder="z.B. mistral-large-latest",
+            key="model",
+        )
 
     st.markdown("---")
     if st.button("Abmelden", use_container_width=True):
@@ -179,32 +156,29 @@ with st.sidebar:
         st.rerun()
 
 # ── Hauptbereich ──────────────────────────────────────────────────────────────
+st.title("📰 IBM Z Newsletter Automation")
+st.caption("Erstellt automatisch einen Newsletter aus den aktuellen IBM Z DACH Blog-Artikeln.")
+st.divider()
+
 col1, col2 = st.columns(2)
-
 with col1:
-    start_date = st.date_input(
-        "Von",
-        value=date.today().replace(day=1),
-        format="DD.MM.YYYY",
-    )
-
+    start_date = st.date_input("Von", value=date.today().replace(day=1), format="DD.MM.YYYY")
 with col2:
-    end_date = st.date_input(
-        "Bis",
-        value=date.today(),
-        format="DD.MM.YYYY",
-    )
+    end_date = st.date_input("Bis", value=date.today(), format="DD.MM.YYYY")
 
-issue_number = st.text_input(
-    "Issue-Nummer (optional)",
-    value=saved.get("last_issue", ""),
-    placeholder="z.B. 14",
-)
+st.text_input("Issue-Nummer (optional)", placeholder="z.B. 14", key="issue_number")
 
 st.divider()
 
 # ── Start-Button ──────────────────────────────────────────────────────────────
-ready = bool(api_key) and (bool(base_url) if provider_name == "Andere (OpenAI-kompatibel)" else True) and bool(model)
+api_key  = st.session_state.api_key
+model    = st.session_state.model
+base_url = (st.session_state.custom_base_url
+            if provider_name == "Andere (OpenAI-kompatibel)"
+            else cfg["base_url"] or "")
+ready    = bool(api_key) and bool(model) and (
+               bool(base_url) if provider_name == "Andere (OpenAI-kompatibel)" else True
+           )
 
 if not ready:
     st.info("👈 Bitte zuerst API Key und Modell in der Seitenleiste eingeben.")
@@ -216,19 +190,17 @@ if st.button("🚀 Newsletter erstellen", type="primary",
         st.error("Das Startdatum muss vor dem Enddatum liegen.")
         st.stop()
 
-    issue_str = issue_number.strip() or "?"
-    save_config({**saved, "last_issue": issue_str})
+    issue_str = st.session_state.issue_number.strip() or "?"
 
     import summarizer
     summarizer.API_KEY  = api_key
-    summarizer.BASE_URL = base_url or ""
+    summarizer.BASE_URL = base_url
     summarizer.MODEL    = model
 
     with st.status("⏳ Daten werden geladen...", expanded=True) as status:
 
         # ── Schritt 1: Artikel scrapen ────────────────────────────────────────
         st.write(f"📡 Suche Artikel: {start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}")
-
         try:
             from scraper import fetch_articles_in_range
             articles = fetch_articles_in_range(start_date, end_date, verbose=False)
@@ -239,10 +211,7 @@ if st.button("🚀 Newsletter erstellen", type="primary",
 
         if not articles:
             status.update(label="Keine Artikel gefunden", state="error")
-            st.warning(
-                "Für diesen Zeitraum wurden keine Artikel gefunden. "
-                "Bitte anderen Zeitraum wählen."
-            )
+            st.warning("Für diesen Zeitraum wurden keine Artikel gefunden. Bitte anderen Zeitraum wählen.")
             st.stop()
 
         st.write(f"✅ **{len(articles)} Artikel gefunden:**")
@@ -258,10 +227,7 @@ if st.button("🚀 Newsletter erstellen", type="primary",
             month=_m % 12 + 1,
             day=min(end_date.day, _cal.monthrange(end_date.year + _m // 12, _m % 12 + 1)[1]),
         )
-        st.write(
-            f"📅 Suche Upcoming Events: "
-            f"{events_start.strftime('%d.%m.%Y')} – {events_end.strftime('%d.%m.%Y')}"
-        )
+        st.write(f"📅 Suche Upcoming Events: {events_start.strftime('%d.%m.%Y')} – {events_end.strftime('%d.%m.%Y')}")
         events = []
         events_truncated = False
         try:
@@ -273,24 +239,21 @@ if st.button("🚀 Newsletter erstellen", type="primary",
             if events:
                 st.write(f"✅ **{len(events)} Events gefunden{' (auf 10 begrenzt)' if events_truncated else ''}:**")
                 for ev in events:
-                    date_str = ev.event_date.strftime("%d.%m.%Y")
-                    st.write(f"  - {date_str}: {ev.title[:60]}")
+                    st.write(f"  - {ev.event_date.strftime('%d.%m.%Y')}: {ev.title[:60]}")
             else:
                 st.write("ℹ️ Keine Events für diesen Zeitraum gefunden.")
         except Exception as e:
             st.warning(f"Events konnten nicht geladen werden (Newsletter wird trotzdem erstellt): {e}")
-            events = []
 
         # ── Schritt 3: Zusammenfassen ─────────────────────────────────────────
         st.write(f"🤖 Zusammenfassungen werden erstellt ({model})...")
         progress_bar = st.progress(0, text="Starte...")
-
         try:
             from summarizer import summarize_article, _build_client
             client = _build_client()
         except Exception as e:
             status.update(label="❌ API-Fehler", state="error")
-            st.error(f"Verbindung zu Groq fehlgeschlagen: {e}")
+            st.error(f"Verbindung zur KI fehlgeschlagen: {e}")
             st.stop()
 
         summarized = []
@@ -301,12 +264,12 @@ if st.button("🚀 Newsletter erstellen", type="primary",
             )
             summary = summarize_article(article, client)
             summarized.append({
-                "title": article.title,
-                "author": article.author,
-                "url": article.url,
-                "published": article.published,
-                "summary": summary,
-                "image_url": article.image_url,
+                "title":       article.title,
+                "author":      article.author,
+                "url":         article.url,
+                "published":   article.published,
+                "summary":     summary,
+                "image_url":   article.image_url,
                 "image_bytes": article.image_bytes,
             })
 
@@ -316,19 +279,18 @@ if st.button("🚀 Newsletter erstellen", type="primary",
         # ── Schritt 4: Events in Dicts umwandeln ──────────────────────────────
         event_dicts = [
             {
-                "title": ev.title,
-                "event_date": ev.event_date,
-                "time_str": ev.time_str,
-                "location": ev.location,
+                "title":       ev.title,
+                "event_date":  ev.event_date,
+                "time_str":    ev.time_str,
+                "location":    ev.location,
                 "description": ev.description,
-                "url": ev.url,
+                "url":         ev.url,
             }
             for ev in events
-        ] if events is not None else []
+        ] if events else []
 
         # ── Schritt 5: PPTX erstellen ─────────────────────────────────────────
         st.write("📄 PPTX wird generiert...")
-
         try:
             from pptx_builder import build_newsletter
             output_path = build_newsletter(
@@ -352,7 +314,6 @@ if st.button("🚀 Newsletter erstellen", type="primary",
 
     filename = os.path.basename(output_path)
     st.success(f"**{filename}** wurde erfolgreich erstellt!")
-
     st.download_button(
         label="⬇️ PPTX herunterladen",
         data=pptx_bytes,
@@ -366,18 +327,14 @@ if st.button("🚀 Newsletter erstellen", type="primary",
     with st.expander(f"📋 {len(summarized)} Artikel im Newsletter"):
         for a in summarized:
             st.markdown(f"**{a['title']}**")
-            st.caption(
-                f"{a['author']} · {a['published'].strftime('%d.%m.%Y')} "
-                f"· [Originalartikel →]({a['url']})"
-            )
+            st.caption(f"{a['author']} · {a['published'].strftime('%d.%m.%Y')} · [Originalartikel →]({a['url']})")
             st.markdown(a["summary"])
             st.divider()
 
     if events:
         with st.expander(f"📅 {len(events)} Events im Newsletter"):
             for ev in events:
-                date_str = ev.event_date.strftime("%d.%m.%Y")
-                parts = [date_str]
+                parts = [ev.event_date.strftime("%d.%m.%Y")]
                 if ev.time_str:
                     parts.append(ev.time_str)
                 if ev.location:
