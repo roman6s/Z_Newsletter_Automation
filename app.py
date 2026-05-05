@@ -220,7 +220,7 @@ if st.button("🚀 Newsletter erstellen", type="primary",
 
         # ── Schritt 2: Events scrapen ─────────────────────────────────────────
         import calendar as _cal
-        _m = end_date.month - 1 + 1
+        _m = end_date.month - 1 + 2  # 2 Monate in die Zukunft
         events_start = end_date
         events_end = end_date.replace(
             year=end_date.year + _m // 12,

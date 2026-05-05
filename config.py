@@ -24,8 +24,8 @@ BLOG_URL = (
 
 # Events URL
 EVENTS_URL = (
-    "https://community.ibm.com/community/user/events/calendar"
-    "?CommunityKey=9a8b7fc3-b167-447a-8e14-adf93406eccc"
+    "https://community.ibm.com/community/user/groups/community-home/"
+    "recent-community-events?communitykey=9a8b7fc3-b167-447a-8e14-adf93406eccc"
 )
 
 # Summary language
