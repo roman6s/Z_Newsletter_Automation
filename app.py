@@ -249,7 +249,7 @@ if st.button("🚀 Newsletter erstellen", type="primary",
         st.write(f"🤖 Zusammenfassungen werden erstellt ({model})...")
         progress_bar = st.progress(0, text="Starte...")
         try:
-            from summarizer import summarize_article, _build_client
+            from summarizer import summarize_article, summarize_event, _build_client
             client = _build_client()
         except Exception as e:
             status.update(label="❌ API-Fehler", state="error")
@@ -275,6 +275,13 @@ if st.button("🚀 Newsletter erstellen", type="primary",
 
         progress_bar.empty()
         st.write("✅ Alle Zusammenfassungen fertig.")
+
+        # ── Schritt 3b: Event-Beschreibungen per KI zusammenfassen ───────────
+        if events:
+            st.write(f"🤖 Event-Beschreibungen werden zusammengefasst ({len(events)} Events)...")
+            for ev in events:
+                if ev.description:
+                    ev.description = summarize_event(ev.title, ev.description, client)
 
         # ── Schritt 4: Events in Dicts umwandeln ──────────────────────────────
         event_dicts = [

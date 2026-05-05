@@ -81,6 +81,48 @@ Aufgabe: Schreibe eine strukturierte Zusammenfassung auf Deutsch mit 2-3 Absätz
     return "[Zusammenfassung nicht verfügbar: Rate limit nach mehreren Versuchen]"
 
 
+def summarize_event(title: str, description: str, client=None) -> str:
+    """Returns a 1-2 sentence German summary of an event description."""
+    if not description.strip():
+        return ""
+    if client is None:
+        client = _build_client()
+
+    prompt = f"""Du erstellst kurze Event-Beschreibungen für einen IBM Z Newsletter auf {SUMMARY_LANGUAGE}.
+
+Event-Titel: {title}
+
+Event-Beschreibung:
+{description[:2000]}
+
+Aufgabe: Schreibe 1-2 Sätze auf Deutsch, die erklären worum es bei diesem Event geht.
+- Fokus: Was ist der Inhalt / das Thema des Events?
+- Kein Datum, kein Ort – nur das Thema
+- Professioneller, informativer Ton
+- Falls der Text nicht auf Deutsch ist, übersetze die Kernaussage
+- Schreibe NUR die 1-2 Sätze, ohne Einleitung"""
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150,
+                temperature=0.3,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "rate_limit" in err.lower():
+                wait = 30 * (attempt + 1)
+                print(f"    Rate limit, warte {wait}s...")
+                time.sleep(wait)
+            else:
+                return ""
+
+    return ""
+
+
 def summarize_articles(articles: list, verbose: bool = True) -> list:
     """Returns list of dicts with keys: title, author, url, published, summary."""
     client = _build_client()
